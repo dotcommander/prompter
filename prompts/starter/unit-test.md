@@ -8,7 +8,7 @@ triggers:
   - generate unit tests
   - write test cases
 examples:
-  - prompter run unit-test "func ParseConfig(...) ..."
+  - prompter apply unit-test "func ParseConfig(...) ..."
 ---
 
 You are an expert software test engineer specializing in robust, table-driven unit tests and high branch coverage.

@@ -12,12 +12,12 @@ Prompter scans `prompts_dir` and `prompts_dirs` recursively and indexes `.md` fi
 The same index powers native execution by exact name or alias:
 
 ```bash
-cat source.md | prompter run grai-transform
+cat source.md | prompter apply grai-transform
 ```
 
 The selected prompt body becomes the system prompt. Frontmatter is not sent to the provider. Ambiguous exact matches fail and list their paths.
 
-Optional output validation applies only to `prompter run` and requires buffered output:
+Optional output validation applies only to `prompter apply` and requires buffered output:
 
 ```yaml
 validation:
@@ -60,7 +60,7 @@ aliases:
 triggers:
   - rough prompt
 examples:
-  - prompter "make this better"
+  - prompter refine "make this better"
 ---
 
 # Prompt body
@@ -90,7 +90,7 @@ Invalid frontmatter does not stop scanning. The file still indexes, and a warnin
 
 ## Component Library
 
-`prompter assemble` and `prompter stats` read reusable image-prompt components from `components_file` in `~/.config/prompter/config.json`.
+`prompter image` reads reusable image-prompt components from `components_file` in `~/.config/prompter/config.json`.
 
 ```json
 {
@@ -113,9 +113,8 @@ If the file is missing, Prompter uses embedded default components. A custom comp
 
 - `prompts_dir` exists
 - Directory contains `.md` files
-- `prompter` shows finder entries
-- `prompter assemble "test subject"` prints an assembled prompt
-- `prompter stats` prints component counts
+- `prompter browse` shows finder entries
+- `prompter image "test subject"` prints an assembled image-generation prompt
 - Frontmatter parse failures only warn; they do not abort scan
 
 ## Related docs

@@ -99,20 +99,58 @@ func TestRunInit_IdempotentAndForce(t *testing.T) {
 	}
 }
 
-func TestParseArgs_InitCommand(t *testing.T) {
+func TestParseArgs_InitCommandRemoved(t *testing.T) {
+	t.Parallel()
+	if _, err := parseArgs([]string{"init"}); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("parseArgs(init) error = %v, want unknown command", err)
+	}
+}
+
+func TestRunInitForceRefusesSymlinkDestinations(t *testing.T) {
 	t.Parallel()
 
-	f, err := parseArgs([]string{"init", "--force", "/tmp/custom-vault"})
+	tmpDir := t.TempDir()
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "victim.md")
+	original := []byte("original contents\n")
+	if err := os.WriteFile(victim, original, 0o644); err != nil {
+		t.Fatalf("write victim: %v", err)
+	}
+	if err := os.Symlink(victim, filepath.Join(tmpDir, "refactor.md")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	cfg := &config.Config{PromptsDir: tmpDir}
+
+	t.Run("force refuses before any write", func(t *testing.T) {
+		t.Parallel()
+		var stdout, stderr bytes.Buffer
+		err := runInit(&stdout, &stderr, cfg, tmpDir, true)
+		if err == nil || !strings.Contains(err.Error(), "symlink") {
+			t.Fatalf("expected symlink refusal, got: %v", err)
+		}
+		assertVictimIntact(t, victim, original)
+	})
+
+	t.Run("without force symlinks are skipped not followed", func(t *testing.T) {
+		t.Parallel()
+		var stdout, stderr bytes.Buffer
+		if err := runInit(&stdout, &stderr, cfg, tmpDir, false); err != nil {
+			t.Fatalf("runInit: %v", err)
+		}
+		if !strings.Contains(stdout.String(), "refactor.md") {
+			t.Errorf("expected refactor.md reported skipped: %s", stdout.String())
+		}
+		assertVictimIntact(t, victim, original)
+	})
+}
+
+func assertVictimIntact(t *testing.T, victim string, original []byte) {
+	t.Helper()
+	data, err := os.ReadFile(victim)
 	if err != nil {
-		t.Fatalf("parseArgs(init) error: %v", err)
+		t.Fatalf("read victim: %v", err)
 	}
-	if f.command != "init" {
-		t.Errorf("command = %q, want %q", f.command, "init")
-	}
-	if !f.force {
-		t.Errorf("force = false, want true")
-	}
-	if len(f.args) != 1 || f.args[0] != "/tmp/custom-vault" {
-		t.Errorf("args = %v, want [/tmp/custom-vault]", f.args)
+	if string(data) != string(original) {
+		t.Errorf("file outside the vault was modified: %q", data)
 	}
 }

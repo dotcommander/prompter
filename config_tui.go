@@ -141,7 +141,7 @@ func popularModelsFor(p string) []modelChoice {
 		}
 	case "omlx":
 		return []modelChoice{
-			{"LFM2.5-2.6B-4bit", "LFM2.5-2.6B-4bit (Default / Apple MLX)"},
+			{"Ornith-1.5-35B-A3B-oQ4e-mtp", "Ornith-1.5-35B-A3B-oQ4e-mtp (Default / Apple MLX)"},
 			{"Qwen2.5-Coder-7B-Instruct-4bit", "Qwen2.5-Coder-7B-Instruct-4bit (Coding Optimized)"},
 			{"Llama-3.2-3B-Instruct-4bit", "Llama-3.2-3B-Instruct-4bit (Compact 3B)"},
 		}

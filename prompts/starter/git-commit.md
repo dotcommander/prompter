@@ -8,7 +8,7 @@ triggers:
   - generate commit message
   - write commit msg
 examples:
-  - git diff --staged | prompter run git-commit
+  - git diff --staged | prompter apply git-commit
 ---
 
 You are an expert Git release engineer.

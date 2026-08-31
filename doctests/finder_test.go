@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestFinderTrigger explains what triggers the finder (no input)
+// TestFinderTrigger explains what triggers the finder (prompter browse)
 func TestFinderTrigger(t *testing.T) {
 	t.Parallel()
 	content, err := os.ReadFile("../docs/finder.md")
@@ -16,7 +16,7 @@ func TestFinderTrigger(t *testing.T) {
 
 	text := string(content)
 
-	// Check that "no input" is documented as the trigger
+	// Check that finder trigger and input behavior are documented
 	checks := []struct {
 		name        string
 		mustContain []string
@@ -26,8 +26,8 @@ func TestFinderTrigger(t *testing.T) {
 			mustContain: []string{"## Triggering the Finder"},
 		},
 		{
-			name:        "no input trigger documented",
-			mustContain: []string{"without any input", "no input", "prompter"},
+			name:        "browse trigger documented",
+			mustContain: []string{"prompter browse"},
 		},
 		{
 			name:        "empty pipe documented",

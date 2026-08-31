@@ -12,7 +12,7 @@
 - **Unix Composability**: Clean, machine-usable prompt output is written strictly to `stdout`. Progress spinners, debug logs, timing metrics, and dry-run diagnostics go exclusively to `stderr`.
 - **Fail Fast, Fail Loud**: Never introduce silent fallbacks, magic defaults that mask missing credentials, or silent error suppression. If configuration is missing or an API error occurs, exit immediately with a distinct non-zero exit code (`1` for errors, `130` for `SIGINT`).
 - **Zero-Touch Startup**: Operates out of the box with Google Application Default Credentials (ADC) for Gemini or standard environment variables (`OPENAI_API_KEY`, `GROQ_API_KEY`, etc.) without requiring an initial configuration file.
-- **Offline First Where Applicable**: Image prompt assembly (`assemble`) and component statistics (`stats`) execute 100% offline without remote network requests.
+- **Offline First Where Applicable**: Image prompt construction (`image`) executes 100% offline without remote network requests.
 - **Portable Configuration**: Any generated or saved `~/.config/prompter/config.json` uses portable `~` paths (e.g. `"prompts_dir": "~/.config/prompter/prompts.d"`), dynamically expanded at runtime on macOS, Linux, and Windows.
 
 ---
@@ -21,22 +21,15 @@
 
 | Command | Usage | Description | Input Source |
 |---------|-------|-------------|--------------|
-| *(default)* | `prompter [input]` / `echo "..." \| prompter` | Enhances rough prompt input using the active LLM provider. | Positional args, `--file`, or piped stdin |
-| *(no args)* | `prompter` | Launches interactive Bubble Tea fuzzy finder across local prompt directories (`prompts_dir`). Selection is copied to clipboard and emitted to `stdout`. | Interactive TTY |
-| `find` | `prompter find` | Explicit command to launch the interactive prompt finder. | Interactive TTY |
-| `run` | `prompter run <name-or-alias> [input]` | Runs a catalog prompt by exact name or alias; strips frontmatter and uses prompt body as system prompt. | Positional args, `--file`, or piped stdin |
-| `enhance` | `prompter enhance <context>` | Explicit subcommand to run prompt enhancement on context. | Positional args, `--file`, or piped stdin |
+| *(no args)* | `prompter` | Prints usage on an interactive terminal; piped input without an explicit command is rejected. | None |
+| `refine` | `prompter refine <context>` | Improves rough prompt input using the active LLM provider. | Positional args, `--file`, or piped stdin |
 | `critique` | `prompter critique <prompt>` | Analyzes flaws, ambiguities, and missing constraints without rewriting. | Positional args, `--file`, or piped stdin |
 | `rewrite` | `prompter rewrite --file notes.md --mode clean` | Cleans, organizes, and restructures rough Markdown and documentation. | Positional args, `--file`, or piped stdin |
-| `assemble` | `prompter assemble <subject>` | Assembles a detailed image prompt from local modular components. | Offline / Positional args |
-| `stats` | `prompter stats` | Calculates and displays statistics for the local image component library. | Offline |
-| `config` | `prompter config` | Launches interactive TUI configuration wizard (or displays resolved non-secret config when piped/non-interactive). | Interactive TTY / Pipe |
-| `styles` | `prompter styles` / `prompter modes` | Lists available enhancement styles and rewrite modes with descriptions. | Output to stdout |
-| `providers` | `prompter providers` | Lists supported LLM providers, models, base URLs, and credential status. | Output to stdout |
-| `init` | `prompter init [dir]` | Seeds local vault with starter prompts (`refactor`, `code-review`, etc.). | Offline / Local FS |
-| `update` | `prompter update` | Installs the latest released version using the Go toolchain (`go install`). | Toolchain execution |
-| `version` | `prompter version` / `-V` / `--version` | Displays version and build information from Go build metadata. | Output to stdout |
-| `help` | `prompter help [command]` / `-h` / `--help` | Prints root usage information or contextual help for a subcommand. | Output to stdout/stderr |
+| `apply` | `prompter apply <name-or-alias> [input]` | Applies a catalog prompt by exact name or alias; strips frontmatter and uses prompt body as system prompt. | Positional args, `--file`, or piped stdin |
+| `browse` | `prompter browse` | Launches the Bubble Tea prompt browser across local prompt directories. Selection is copied to clipboard and emitted to `stdout`. | Interactive TTY |
+| `image` | `prompter image <subject>` | Builds a detailed image-generation prompt from local modular components; it does not generate an image. | Offline / Positional args |
+| `configure` | `prompter configure` | Launches the TUI configuration wizard, or displays resolved non-secret config when non-interactive. | Interactive TTY / redirected output |
+| Global flags | `prompter --help` / `prompter --version` | Prints root help or version/build information. | None |
 
 ---
 
@@ -69,7 +62,7 @@ Settings are resolved using a strict precedence order:
 - **`openai`**: Uses the OpenAI Responses API with `Instructions` for system prompt separation.
 - **`chat providers` (`cerebras`, `groq`, `openrouter`, `synthetic`, `zai`)**: Standard Chat Completions API with structured `{role: "system"}` and `{role: "user"}` payloads.
 - **`wormhole`**: Connects to local loopback proxy (`http://127.0.0.1:8080/v1`). Supports provider routing prefixes (e.g. `-m groq/openai/gpt-oss-120b`). API key is optional for unauthenticated local instances.
-- **`omlx`**: Connects to local Apple MLX server (`http://127.0.0.1:8000/v1`) with default model `LFM2.5-2.6B-4bit`.
+- **`omlx`**: Connects to local Apple MLX server (`http://127.0.0.1:8000/v1`) with default model `Ornith-1.5-35B-A3B-oQ4e-mtp`.
 
 ---
 
@@ -112,26 +105,22 @@ flowchart TD
     Start([CLI Invocation]) --> ParseArgs[Parse CLI Args & Flags via interspersedFlagArgs]
     ParseArgs --> LoadConfig[Load Config: CLI > Env > config.json > Defaults]
     
-    LoadConfig --> CheckMode{Input or Subcommand?}
+    LoadConfig --> CheckMode{Which explicit command?}
     
-    CheckMode -- "No input & TTY (Interactive)" --> FinderFlow[Show Bubble Tea Finder]
+    CheckMode -- "No command" --> PrintHelp[Print Usage Help to stderr]
+    CheckMode -- "browse (Interactive TTY)" --> FinderFlow[Show Bubble Tea Finder]
     FinderFlow --> ScanPrompts[Scan prompt dirs for .md files]
     ScanPrompts --> FuzzySearch[Weighted Fuzzy Search & Select]
     FuzzySearch --> OutputFinder[Copy to Clipboard + Print to stdout]
     
-    CheckMode -- "config (Interactive TTY)" --> ConfigTUI[Run Huh Config Wizard]
+    CheckMode -- "configure (Interactive TTY)" --> ConfigTUI[Run Huh Config Wizard]
     ConfigTUI --> SaveConfig[Save ~/.config/prompter/config.json with portable ~ paths]
     
-    CheckMode -- "assemble" --> AssembleFlow[Image Assembly]
+    CheckMode -- "image" --> AssembleFlow[Image Prompt Construction]
     AssembleFlow --> LocalComponents[Combine Local Components in Memory]
     LocalComponents --> OutputResult[Write to stdout / --output / Clipboard]
     
-    CheckMode -- "stats" --> StatsFlow[Calculate Component Library Stats]
-    StatsFlow --> PrintStats[Print Stats to stdout]
-    
-    CheckMode -- "update" --> RunUpdate[Execute go install github.com/dotcommander/prompter@latest]
-    
-    CheckMode -- "enhance / critique / rewrite / run / default" --> LLMFlow[LLM Pipeline]
+    CheckMode -- "refine / critique / rewrite / apply" --> LLMFlow[LLM Pipeline]
     LLMFlow --> ResolvePrompt[Resolve System Prompt & Mode/Style]
     ResolvePrompt --> ResolveProv[Resolve Provider from Registry & Validate Keys]
     ResolveProv --> ReadInput[Read Input: args / --file / stdin max 1MB]
@@ -187,5 +176,5 @@ gofmt -l .
    - `doctests/finder_test.go` asserts that `docs/finder.md` explicitly documents stdout behavior using phrases like `Stdout`/`printed to stdout`.
    - `doctests/flags_test.go` asserts required flag documentation in `docs/flags.md`.
    - `doctests/providers_test.go` asserts that all registered provider names (`cerebras`, `gemini`, `groq`, `omlx`, `openai`, `openrouter`, `synthetic`, `wormhole`, `zai`) are documented in `docs/providers.md` and `AGENTS.md`.
-2. **Flag Interspersing**: Positional arguments and flags can appear in any order (e.g. `prompter "prompt text" -p openai -s concise`). Flag parsing logic in `cli_flow.go` uses `interspersedFlagArgs`.
-3. **Output Validation Protocol**: When catalog prompts declare validation frontmatter, `prompter run` enforces length ratios, sentence bounds, and optional LLM semantic evaluation. Streaming is strictly disallowed for validated prompts.
+2. **Flag Interspersing**: After the explicit command, positional arguments and command-owned flags can appear in any order (e.g. `prompter refine "prompt text" -p openai -s concise`). Flag parsing logic in `cli_flow.go` uses `interspersedFlagArgs`.
+3. **Output Validation Protocol**: When catalog prompts declare validation frontmatter, `prompter apply` enforces length ratios, sentence bounds, and optional LLM semantic evaluation. Streaming is strictly disallowed for validated prompts.

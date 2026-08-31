@@ -96,15 +96,15 @@ func TestOmlxProviderDoesNotRequireAPIKey(t *testing.T) {
 
 	registry := NewRegistry(RegistryConfig{
 		Providers: map[string]ProviderSettings{
-			"omlx": {Model: "LFM2.5-2.6B-4bit", BaseURL: "http://127.0.0.1:8000/v1"},
+			"omlx": {Model: "Ornith-1.5-35B-A3B-oQ4e-mtp", BaseURL: "http://127.0.0.1:8000/v1"},
 		},
 	})
 	prov := registry["omlx"]
 	if prov.Name() != "omlx" {
 		t.Fatalf("Name = %q, want omlx", prov.Name())
 	}
-	if prov.Model() != "LFM2.5-2.6B-4bit" {
-		t.Fatalf("Model = %q, want LFM2.5-2.6B-4bit", prov.Model())
+	if prov.Model() != "Ornith-1.5-35B-A3B-oQ4e-mtp" {
+		t.Fatalf("Model = %q, want Ornith-1.5-35B-A3B-oQ4e-mtp", prov.Model())
 	}
 	if prov.APIKey() == "" {
 		t.Fatal("APIKey should be non-empty sentinel for local provider")
@@ -164,6 +164,67 @@ func TestWormholeProviderCallsOpenAICompatibleAPI(t *testing.T) {
 	}
 	if got != "from wormhole" {
 		t.Fatalf("Call = %q, want from wormhole", got)
+	}
+}
+
+func TestChatProviderCallRejectsLengthTruncation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"id":"chatcmpl-test",
+			"object":"chat.completion",
+			"created":1,
+			"model":"model",
+			"choices":[{
+				"index":0,
+				"message":{"role":"assistant","content":"partial response"},
+				"finish_reason":"length"
+			}]
+		}`)
+	}))
+	t.Cleanup(server.Close)
+
+	prov := NewChat("omlx", "local", "model", server.URL+"/v1", 0, 8192)
+	got, err := prov.Call(context.Background(), CallRequest{Model: "model", UserPrompt: "input"})
+	if got != "" {
+		t.Fatalf("Call output = %q, want empty on truncation", got)
+	}
+	if err == nil {
+		t.Fatal("Call expected truncation error, got nil")
+	}
+	for _, want := range []string{"omlx", "8192", "truncated", "max_output_tokens"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Call error = %q, want %q", err, want)
+		}
+	}
+}
+
+func TestChatProviderStreamCallReportsLengthTruncationAfterWritingPartialOutput(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial response\"},\"finish_reason\":null}]}\n\n")
+		_, _ = io.WriteString(w, "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n")
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(server.Close)
+
+	prov := NewChat("omlx", "local", "model", server.URL+"/v1", 0, 8192)
+	var output bytes.Buffer
+	err := prov.StreamCall(context.Background(), CallRequest{Model: "model", UserPrompt: "input"}, &output)
+	if output.String() != "partial response" {
+		t.Fatalf("StreamCall output = %q, want partial response", output.String())
+	}
+	if err == nil {
+		t.Fatal("StreamCall expected truncation error, got nil")
+	}
+	for _, want := range []string{"omlx", "8192", "partial output", "max_output_tokens"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("StreamCall error = %q, want %q", err, want)
+		}
 	}
 }
 

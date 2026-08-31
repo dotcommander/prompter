@@ -118,7 +118,7 @@ func googleADCAccessToken(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "gcloud", "auth", "application-default", "print-access-token", "--scopes="+vertexADCScope, "--quiet")
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("gemini authentication failed (Google ADC token resolution failed).\nTo use Gemini, do one of:\n  1. Provide an AI Studio key: export GEMINI_API_KEY=\"AIza...\"\n  2. Authenticate Google Cloud ADC: gcloud auth application-default login\n  3. Switch default provider: prompter config (e.g. OpenAI, Groq)")
+		return "", fmt.Errorf("gemini authentication failed (Google ADC token resolution failed).\nTo use Gemini, do one of:\n  1. Provide an AI Studio key: export GEMINI_API_KEY=\"AIza...\"\n  2. Authenticate Google Cloud ADC: gcloud auth application-default login\n  3. Switch default provider: prompter configure (e.g. OpenAI, Groq)")
 	}
 	token := strings.TrimSpace(string(out))
 	if token == "" {

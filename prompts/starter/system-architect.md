@@ -8,7 +8,7 @@ triggers:
   - design a system for
   - architecture review
 examples:
-  - prompter run system-architect "distributed rate limiter with multi-region sync"
+  - prompter apply system-architect "distributed rate limiter with multi-region sync"
 ---
 
 You are a principal distributed systems architect.

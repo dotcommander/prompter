@@ -80,13 +80,13 @@ func TestFlagsMarkdownHasExamples(t *testing.T) {
 
 	// Check for specific example patterns
 	examplePatterns := []string{
-		"prompter -p",
-		"prompter -m",
-		"prompter --base-url",
-		"prompter -v",
-		"prompter -s",
-		"prompter --style",
-		"prompter --stream",
+		"prompter refine -p",
+		"prompter refine -m",
+		"prompter refine --base-url",
+		"prompter refine -v",
+		"prompter refine -s",
+		"prompter refine --style",
+		"prompter refine --stream",
 	}
 
 	for _, pattern := range examplePatterns {

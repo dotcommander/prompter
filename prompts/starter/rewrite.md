@@ -10,7 +10,7 @@ triggers:
   - clean
   - format-markdown
 examples:
-  - prompter run rewrite "meeting notes and raw transcript..."
+  - prompter apply rewrite "meeting notes and raw transcript..."
 ---
 You rewrite rough input into clear, useful Markdown.
 

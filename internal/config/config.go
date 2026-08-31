@@ -142,7 +142,7 @@ const configTemplate = `{
 
   "omlx": {
     "api_key": "",
-    "model": "LFM2.5-2.6B-4bit",
+    "model": "Ornith-1.5-35B-A3B-oQ4e-mtp",
     "base_url": "http://127.0.0.1:8000/v1"
   }
 }
@@ -298,7 +298,7 @@ func DefaultProviders() map[string]ProviderConfig {
 			BaseURL:   "https://aiplatform.googleapis.com/v1",
 		},
 		"omlx": {
-			Model:   "LFM2.5-2.6B-4bit",
+			Model:   "Ornith-1.5-35B-A3B-oQ4e-mtp",
 			BaseURL: "http://127.0.0.1:8000/v1",
 		},
 	}

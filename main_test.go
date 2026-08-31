@@ -58,11 +58,11 @@ func TestParseArgs_NewIOFlags(t *testing.T) {
 	t.Parallel()
 
 	f, err := parseArgs([]string{
+		"refine",
 		"--dry-run",
 		"-f", "input.txt",
 		"-o", "output.txt",
 		"--stream",
-		"enhance",
 	})
 	if err != nil {
 		t.Fatalf("parseArgs error: %v", err)
@@ -79,32 +79,32 @@ func TestParseArgs_NewIOFlags(t *testing.T) {
 	if !f.stream {
 		t.Error("stream = false, want true")
 	}
-	if f.command != "enhance" {
-		t.Errorf("command = %q, want enhance", f.command)
+	if f.command != "refine" {
+		t.Errorf("command = %q, want refine", f.command)
 	}
 }
 
-func TestParseArgs_AssembleFlags(t *testing.T) {
+func TestParseArgs_ImageFlags(t *testing.T) {
 	t.Parallel()
 
 	f, err := parseArgs([]string{
+		"image",
 		"--profile", "minimal",
 		"--count", "2",
 		"--json",
 		"--no-artist",
 		"--categories", "quality,style",
 		"--seed", "test-seed",
-		"assemble",
 		"moon castle",
 	})
 	if err != nil {
 		t.Fatalf("parseArgs error: %v", err)
 	}
-	if f.command != "assemble" {
-		t.Fatalf("command = %q, want assemble", f.command)
+	if f.command != "image" {
+		t.Fatalf("command = %q, want image", f.command)
 	}
 	if f.profile != "minimal" || f.count != 2 || !f.json || !f.noArtist || f.categories != "quality,style" || f.seed != "test-seed" {
-		t.Fatalf("assemble flags not parsed correctly: %+v", f)
+		t.Fatalf("image flags not parsed correctly: %+v", f)
 	}
 	if strings.Join(f.args, " ") != "moon castle" {
 		t.Fatalf("args = %v, want moon castle", f.args)
@@ -115,8 +115,8 @@ func TestParseArgs_RewriteMode(t *testing.T) {
 	t.Parallel()
 
 	f, err := parseArgs([]string{
-		"--mode", "academic",
 		"rewrite",
+		"--mode", "academic",
 		"rough notes",
 	})
 	if err != nil {
@@ -136,7 +136,7 @@ func TestParseArgs_RewriteMode(t *testing.T) {
 func TestParseArgs_ShortFlags(t *testing.T) {
 	t.Parallel()
 
-	f, err := parseArgs([]string{"-p", "openai", "-m", "gpt-test", "-c", "-f", "input.txt"})
+	f, err := parseArgs([]string{"refine", "-p", "openai", "-m", "gpt-test", "-c", "-f", "input.txt"})
 	if err != nil {
 		t.Fatalf("parseArgs error: %v", err)
 	}
@@ -170,16 +170,14 @@ func TestParseArgs_InterspersedFlags(t *testing.T) {
 		wantJSON    bool
 	}{
 		{
-			name:        "output after prompt",
-			args:        []string{"write a release checklist", "-o", "prompt.txt"},
-			wantArgs:    "write a release checklist",
-			wantOutput:  "prompt.txt",
-			wantProfile: "default",
-			wantCount:   1,
+			name:       "output after prompt",
+			args:       []string{"refine", "write a release checklist", "-o", "prompt.txt"},
+			wantArgs:   "write a release checklist",
+			wantOutput: "prompt.txt",
 		},
 		{
 			name:        "assembly flags after subject",
-			args:        []string{"assemble", "portrait of a clockmaker", "--profile", "minimal", "--count", "3", "--json"},
+			args:        []string{"image", "portrait of a clockmaker", "--profile", "minimal", "--count", "3", "--json"},
 			wantArgs:    "portrait of a clockmaker",
 			wantProfile: "minimal",
 			wantCount:   3,
@@ -207,7 +205,7 @@ func TestParseArgs_InterspersedFlags(t *testing.T) {
 func TestParseArgs_LiteralInputBoundary(t *testing.T) {
 	t.Parallel()
 
-	f, err := parseArgs([]string{"--copy", "--", "-literal", "--json"})
+	f, err := parseArgs([]string{"refine", "--copy", "--", "-literal", "--json"})
 	if err != nil {
 		t.Fatalf("parseArgs error: %v", err)
 	}
@@ -225,7 +223,7 @@ func TestParseArgs_LiteralInputBoundary(t *testing.T) {
 func TestParseArgs_MissingInterspersedFlagValue(t *testing.T) {
 	t.Parallel()
 
-	if _, err := parseArgs([]string{"prompt", "--output"}); err == nil {
+	if _, err := parseArgs([]string{"refine", "prompt", "--output"}); err == nil {
 		t.Fatal("parseArgs expected a missing output value error")
 	}
 }
@@ -320,10 +318,11 @@ func TestPrintDryRun(t *testing.T) {
 	var out strings.Builder
 	prov := provider.NewChat("synthetic", "key", "model-a", "http://test", 3)
 	f := &flags{
-		dryRun: true,
-		style:  "code",
-		file:   "input.txt",
-		output: "output.txt",
+		command: commandRefine,
+		dryRun:  true,
+		style:   "code",
+		file:    "input.txt",
+		output:  "output.txt",
 	}
 	cfg := &config.Config{
 		Effort:       "low",
@@ -349,26 +348,21 @@ func TestPrintDryRun(t *testing.T) {
 	}
 }
 
-func TestPrintUsageIncludesRuntimeValidValues(t *testing.T) {
+func TestPrintUsageIncludesOnlyPublicCommands(t *testing.T) {
 	t.Parallel()
 	var out strings.Builder
 
 	printUsageTo(&out)
 
 	got := out.String()
-	for _, name := range provider.KnownNames() {
-		if !strings.Contains(got, name) {
-			t.Errorf("usage output missing provider %q:\n%s", name, got)
+	for _, command := range []string{"refine", "critique", "rewrite", "apply", "browse", "image", "configure"} {
+		if !strings.Contains(got, command) {
+			t.Errorf("usage output missing command %q:\n%s", command, got)
 		}
 	}
-	for _, style := range availableStyles() {
-		if !strings.Contains(got, style) {
-			t.Errorf("usage output missing style %q:\n%s", style, got)
-		}
-	}
-	for _, mode := range availableRewriteModes() {
-		if !strings.Contains(got, mode) {
-			t.Errorf("usage output missing rewrite mode %q:\n%s", mode, got)
+	for _, legacy := range []string{"  enhance", "  run ", "  assemble", "  find", "  config ", "  stats", "  styles", "  providers", "  init", "  update", "  version "} {
+		if strings.Contains(got, legacy) {
+			t.Errorf("usage output contains legacy command %q:\n%s", legacy, got)
 		}
 	}
 }
@@ -405,21 +399,26 @@ func TestResolveRewritePromptUnknownListsModes(t *testing.T) {
 func TestPreprocessRewriteInput(t *testing.T) {
 	t.Parallel()
 
+	longUnbroken := strings.Repeat("a", 101)
 	input := strings.Join([]string{
 		"# Notes",
-		"Subscribe now",
+		"Subscribe",
+		"Subscribe now to the beta list.",
 		"Keep this fact.",
 		"Keep this fact.",
 		"",
 		"",
 		"",
-		strings.Repeat("a", 101),
+		longUnbroken,
 		"Final line.",
 	}, "\n")
 
 	got := preprocessRewriteInput(input)
-	if strings.Contains(got, "Subscribe") || strings.Contains(got, strings.Repeat("a", 101)) {
-		t.Fatalf("preprocessRewriteInput kept cruft:\n%s", got)
+	if strings.Contains(got, "Subscribe\n") {
+		t.Fatalf("preprocessRewriteInput kept standalone cruft line:\n%s", got)
+	}
+	if !strings.Contains(got, "Subscribe now to the beta list.") || !strings.Contains(got, longUnbroken) {
+		t.Fatalf("preprocessRewriteInput deleted legitimate prose or unbroken lines:\n%s", got)
 	}
 	if strings.Count(got, "Keep this fact.") != 1 {
 		t.Fatalf("preprocessRewriteInput duplicate handling failed:\n%s", got)
@@ -635,7 +634,7 @@ func TestResolveProvider(t *testing.T) {
 			"openrouter": {APIKey: "key", BaseURL: "http://test"},
 			"zai":        {APIKey: "key", BaseURL: "http://test"},
 			"wormhole":   {Model: "groq/openai/gpt-oss-120b", BaseURL: "http://127.0.0.1:8080/v1"},
-			"omlx":       {Model: "LFM2.5-2.6B-4bit", BaseURL: "http://127.0.0.1:8000/v1"},
+			"omlx":       {Model: "Ornith-1.5-35B-A3B-oQ4e-mtp", BaseURL: "http://127.0.0.1:8000/v1"},
 		},
 	}
 	tests := []struct {
@@ -791,7 +790,7 @@ func TestRunRejectsDefaultCopyWithStreamBeforeProviderResolution(t *testing.T) {
 func TestResolveCommandSystemPrompt_LocalCommandsSkipPromptFile(t *testing.T) {
 	t.Parallel()
 
-	for _, command := range []string{"assemble", "stats"} {
+	for _, command := range []string{commandImage, commandBrowse, commandConfigure} {
 		t.Run(command, func(t *testing.T) {
 			t.Parallel()
 			cfg := &config.Config{PromptFile: filepath.Join(t.TempDir(), "missing.md")}
@@ -809,7 +808,7 @@ func TestResolveCommandSystemPrompt_RemoteCommandLoadsPromptFile(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{PromptFile: filepath.Join(t.TempDir(), "missing.md")}
-	if err := resolveCommandSystemPrompt(&flags{command: "enhance"}, cfg); err == nil {
+	if err := resolveCommandSystemPrompt(&flags{command: commandRefine}, cfg); err == nil {
 		t.Fatal("resolveCommandSystemPrompt expected missing prompt error")
 	}
 }
@@ -1562,7 +1561,7 @@ func TestFinderModel_FilteringAndNavigation(t *testing.T) {
 
 func TestPrintCommandUsage(t *testing.T) {
 	t.Parallel()
-	cmds := []string{"enhance", "critique", "rewrite", "assemble", "find", "stats", "config", "styles", "providers", "update"}
+	cmds := []string{"refine", "critique", "rewrite", "apply", "browse", "image", "configure"}
 	for _, cmd := range cmds {
 		var out bytes.Buffer
 		printCommandUsageTo(&out, cmd)
@@ -1576,65 +1575,64 @@ func TestPrintCommandUsage(t *testing.T) {
 	}
 }
 
-func TestParseArgs_NewCommands(t *testing.T) {
+func TestParseArgs_PublicCommands(t *testing.T) {
 	t.Parallel()
-	for _, cmd := range []string{"find", "search", "browse", "config", "styles", "modes", "providers", "update"} {
-		f, err := parseArgs([]string{cmd})
+	tests := [][]string{{"refine"}, {"critique"}, {"rewrite"}, {"apply", "refactor"}, {"browse"}, {"image"}, {"configure"}}
+	for _, args := range tests {
+		f, err := parseArgs(args)
 		if err != nil {
-			t.Fatalf("parseArgs(%q) error: %v", cmd, err)
+			t.Fatalf("parseArgs(%q) error: %v", args, err)
 		}
-		if f.command != cmd {
-			t.Errorf("parseArgs(%q) command = %q, want %q", cmd, f.command, cmd)
+		if f.command != args[0] {
+			t.Errorf("parseArgs(%q) command = %q, want %q", args, f.command, args[0])
 		}
 	}
 }
 
-func TestResolveCommandSystemPrompt_RewriteAcceptsStyle(t *testing.T) {
+func TestParseArgsRejectsLegacyCommands(t *testing.T) {
 	t.Parallel()
-	f := &flags{
-		command:     "rewrite",
-		rewriteMode: "clean",
-		style:       "academic",
-		styleSet:    true,
-	}
-	cfg := &config.Config{}
-	if err := resolveCommandSystemPrompt(f, cfg); err != nil {
-		t.Fatalf("resolveCommandSystemPrompt error: %v", err)
-	}
-	if !strings.Contains(cfg.SystemPrompt, "Mode: academic") {
-		t.Errorf("expected SystemPrompt to contain 'Mode: academic', got:\n%s", cfg.SystemPrompt)
+	for _, command := range []string{"enhance", "run", "assemble", "find", "config", "stats", "styles", "providers", "init", "update", "version", "help"} {
+		if _, err := parseArgs([]string{command}); err == nil || !strings.Contains(err.Error(), "unknown command") {
+			t.Errorf("parseArgs(%q) error = %v, want unknown command", command, err)
+		}
 	}
 }
 
-func TestResolveCommandSystemPrompt_EnhanceModeCrossCompatibility(t *testing.T) {
+func TestParseArgsEnforcesCommandFlagOwnership(t *testing.T) {
 	t.Parallel()
-	f := &flags{
-		command:     "enhance",
-		rewriteMode: "concise",
-		modeSet:     true,
+	for _, args := range [][]string{
+		{"refine", "--mode", "clean"},
+		{"rewrite", "--style", "concise"},
+		{"apply", "refactor", "--style", "concise"},
+		{"image", "subject", "--provider", "openai"},
+	} {
+		if _, err := parseArgs(args); err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("parseArgs(%q) error = %v, want undefined flag", args, err)
+		}
 	}
+}
+
+func TestResolveCommandSystemPromptRefineStyle(t *testing.T) {
+	t.Parallel()
+	f := &flags{command: commandRefine, style: "concise", styleSet: true}
 	cfg := &config.Config{}
 	if err := resolveCommandSystemPrompt(f, cfg); err != nil {
 		t.Fatalf("resolveCommandSystemPrompt error: %v", err)
 	}
 	if cfg.SystemPrompt == "" {
-		t.Errorf("expected non-empty SystemPrompt for concise mode override")
+		t.Fatal("SystemPrompt is empty")
 	}
 }
 
-func TestResolveCommandSystemPrompt_ExplicitRewriteModeHint(t *testing.T) {
+func TestResolveCommandSystemPromptRewriteMode(t *testing.T) {
 	t.Parallel()
-	f := &flags{command: "enhance", rewriteMode: "clean", modeSet: true}
-	if err := resolveCommandSystemPrompt(f, &config.Config{}); err == nil || !strings.Contains(err.Error(), "rewrite mode") {
-		t.Fatalf("resolveCommandSystemPrompt error = %v, want rewrite mode hint", err)
+	f := &flags{command: commandRewrite, rewriteMode: "academic"}
+	cfg := &config.Config{}
+	if err := resolveCommandSystemPrompt(f, cfg); err != nil {
+		t.Fatalf("resolveCommandSystemPrompt error: %v", err)
 	}
-}
-
-func TestResolveCommandSystemPrompt_RejectsConflictingAliases(t *testing.T) {
-	t.Parallel()
-	f := &flags{command: "rewrite", rewriteMode: "academic", modeSet: true, style: "blog", styleSet: true}
-	if err := resolveCommandSystemPrompt(f, &config.Config{}); err == nil || !strings.Contains(err.Error(), "conflict") {
-		t.Fatalf("resolveCommandSystemPrompt error = %v, want conflict", err)
+	if !strings.Contains(cfg.SystemPrompt, "Mode: academic") {
+		t.Errorf("SystemPrompt missing mode:\n%s", cfg.SystemPrompt)
 	}
 }
 
@@ -1657,6 +1655,9 @@ func TestResolveRewritePrompt_StyleHint(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "enhancement style") {
 		t.Errorf("expected error to mention 'enhancement style', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "prompter refine --style creative") {
+		t.Errorf("expected error to show the refine style command, got: %v", err)
 	}
 }
 
@@ -1735,39 +1736,10 @@ func TestRunFinder_UserAborted(t *testing.T) {
 
 func TestVersionCommand(t *testing.T) {
 	t.Parallel()
-
-	// Test parseArgs with "version" command
-	f, err := parseArgs([]string{"version"})
-	if err != nil {
-		t.Fatalf("parseArgs(version) error = %v", err)
-	}
-	if f.command != "version" {
-		t.Errorf("f.command = %q, want %q", f.command, "version")
-	}
-
-	// Test parseArgs with "--version" flag
-	f, err = parseArgs([]string{"--version"})
-	if err != nil {
-		t.Fatalf("parseArgs(--version) error = %v", err)
-	}
-	if f.command != "version" {
-		t.Errorf("f.command = %q, want %q", f.command, "version")
-	}
-
-	// Test parseArgs with "-V" flag
-	f, err = parseArgs([]string{"-V"})
-	if err != nil {
-		t.Fatalf("parseArgs(-V) error = %v", err)
-	}
-	if f.command != "version" {
-		t.Errorf("f.command = %q, want %q", f.command, "version")
-	}
-
-	// Test printVersion output
 	var out strings.Builder
 	printVersion(&out)
-	if !strings.Contains(out.String(), "prompter") {
-		t.Errorf("printVersion output = %q, want containing 'prompter'", out.String())
+	if !strings.Contains(out.String(), "prompter v"+AppVersion) {
+		t.Errorf("printVersion output = %q, want containing %q", out.String(), "prompter v"+AppVersion)
 	}
 }
 
@@ -1853,5 +1825,44 @@ func TestShowFinder_AutoSeedsEmptyDirectory(t *testing.T) {
 	}
 	if len(files) < 5 {
 		t.Errorf("expected at least 5 starter prompt files in directory, found %d", len(files))
+	}
+}
+
+func TestEnsurePromptVaultSeedsEmptyPrimaryWhenSecondaryHasPrompts(t *testing.T) {
+	t.Parallel()
+
+	primaryDir := t.TempDir()
+	secondaryDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(secondaryDir, "existing.md"), []byte("secondary prompt\n"), 0o644); err != nil {
+		t.Fatalf("write secondary prompt: %v", err)
+	}
+	cfg := &config.Config{
+		PromptsDir:  primaryDir,
+		PromptsDirs: []string{primaryDir, secondaryDir},
+	}
+
+	entries, _, err := ensurePromptVault(cfg)
+	if err != nil {
+		t.Fatalf("ensurePromptVault: %v", err)
+	}
+	if len(entries) < 2 {
+		t.Fatalf("entries = %d, want secondary prompt plus seeded starters", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(primaryDir, "refactor.md")); err != nil {
+		t.Fatalf("primary starter prompt was not seeded: %v", err)
+	}
+}
+
+func TestUsageOutputDocumentsBrowse(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	printUsageTo(&out)
+	got := out.String()
+
+	if !strings.Contains(got, "  browse") || !strings.Contains(got, "interactive prompt browser") {
+		t.Errorf("expected usage to document browse command, got:\n%s", got)
+	}
+	if strings.Contains(got, "  find") {
+		t.Errorf("expected usage not to contain legacy find command, got:\n%s", got)
 	}
 }

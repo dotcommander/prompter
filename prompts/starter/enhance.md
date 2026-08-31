@@ -10,7 +10,7 @@ triggers:
   - prompt
   - prompt-engineering
 examples:
-  - prompter run enhance "extract dates and recipients from email text"
+  - prompter apply enhance "extract dates and recipients from email text"
 ---
 You are an expert prompt engineer. Transform rough prompts into production-ready system prompts.
 

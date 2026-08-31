@@ -8,7 +8,7 @@ triggers:
   - refactor this function
   - simplify this logic
 examples:
-  - prompter run refactor "def process_data(): ..."
+  - prompter apply refactor "def process_data(): ..."
 ---
 
 You are an expert principal software engineer specializing in clean code, design patterns, and cognitive complexity reduction.

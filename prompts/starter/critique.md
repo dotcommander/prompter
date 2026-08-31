@@ -10,7 +10,7 @@ triggers:
   - review-prompt
   - audit
 examples:
-  - prompter run critique "summarize this customer complaint"
+  - prompter apply critique "summarize this customer complaint"
 ---
 You are a prompt analyst. Your task is to critique the user's prompt — identify problems without rewriting it.
 

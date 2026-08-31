@@ -9,13 +9,13 @@ import (
 	"github.com/dotcommander/prompter/internal/config"
 )
 
-func TestParseArgsRun(t *testing.T) {
+func TestParseArgsApply(t *testing.T) {
 	t.Parallel()
-	f, err := parseArgs([]string{"run", "grai-transform", "source text", "--provider", "openai"})
+	f, err := parseArgs([]string{"apply", "grai-transform", "source text", "--provider", "openai"})
 	if err != nil {
 		t.Fatalf("parseArgs: %v", err)
 	}
-	if f.command != commandRun || f.promptName != "grai-transform" {
+	if f.command != commandApply || f.promptName != "grai-transform" {
 		t.Fatalf("command = %q, prompt = %q", f.command, f.promptName)
 	}
 	if strings.Join(f.args, " ") != "source text" {
@@ -26,9 +26,9 @@ func TestParseArgsRun(t *testing.T) {
 	}
 }
 
-func TestParseArgsRunRequiresSelector(t *testing.T) {
+func TestParseArgsApplyRequiresSelector(t *testing.T) {
 	t.Parallel()
-	if _, err := parseArgs([]string{"run"}); err == nil || !strings.Contains(err.Error(), "prompt name or alias") {
+	if _, err := parseArgs([]string{"apply"}); err == nil || !strings.Contains(err.Error(), "prompt name or alias") {
 		t.Fatalf("parseArgs error = %v", err)
 	}
 }
@@ -59,13 +59,13 @@ func TestFindPromptEntry(t *testing.T) {
 	}
 }
 
-func TestResolveCommandSystemPromptRun(t *testing.T) {
+func TestResolveCommandSystemPromptApply(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "deep-time.md")
 	writeRunTestFile(t, path, "---\ndescription: test\naliases:\n  - grai-transform\n---\n\n# Prompt body\n")
 	cfg := &config.Config{PromptsDir: dir, PromptsDirs: []string{dir}}
-	f := &flags{command: commandRun, promptName: "grai-transform"}
+	f := &flags{command: commandApply, promptName: "grai-transform"}
 
 	if err := resolveCommandSystemPrompt(f, cfg); err != nil {
 		t.Fatalf("resolveCommandSystemPrompt: %v", err)
@@ -78,21 +78,21 @@ func TestResolveCommandSystemPromptRun(t *testing.T) {
 	}
 }
 
-func TestResolveCommandSystemPromptRunRejectsStyle(t *testing.T) {
+func TestParseArgsApplyRejectsStyle(t *testing.T) {
 	t.Parallel()
-	err := resolveCommandSystemPrompt(&flags{command: commandRun, promptName: "x", styleSet: true}, &config.Config{})
-	if err == nil || !strings.Contains(err.Error(), "does not accept") {
-		t.Fatalf("resolveCommandSystemPrompt error = %v", err)
+	_, err := parseArgs([]string{"apply", "x", "--style", "concise"})
+	if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+		t.Fatalf("parseArgs error = %v", err)
 	}
 }
 
-func TestResolveCommandSystemPromptRunRejectsMalformedValidation(t *testing.T) {
+func TestResolveCommandSystemPromptApplyRejectsMalformedValidation(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "invalid-validation.md")
 	writeRunTestFile(t, path, "---\nvalidation:\n  semantic_validation: \"true\"\n---\nBody\n")
 	cfg := &config.Config{PromptsDir: dir, PromptsDirs: []string{dir}}
-	f := &flags{command: commandRun, promptName: "invalid-validation"}
+	f := &flags{command: commandApply, promptName: "invalid-validation"}
 
 	err := resolveCommandSystemPrompt(f, cfg)
 	if err == nil || !strings.Contains(err.Error(), "semantic_validation must be a boolean") {

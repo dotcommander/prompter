@@ -26,32 +26,32 @@ go install github.com/dotcommander/prompter@latest
 curl -fsSL https://raw.githubusercontent.com/dotcommander/prompter/main/install.sh | sh
 ```
 
-After installation, update to future releases with:
+Update to future releases with the same installation method, for example:
 
 ```bash
-prompter update
+go install github.com/dotcommander/prompter@latest
 ```
 
 2. Run immediately (Gemini with Google ADC is ready out-of-the-box):
 
 ```bash
-prompter "explain this code"
+prompter refine "explain this code"
 ```
 
 3. Or use any remote provider using standard environment variables:
 
 ```bash
 export OPENAI_API_KEY="sk-..."
-prompter -p openai "explain this code"
+prompter refine -p openai "explain this code"
 ```
 
 4. Interactive configuration wizard (optional):
 
 ```bash
-prompter config
+prompter configure
 ```
 
-`prompter config` launches an interactive setup form in your terminal to configure:
+`prompter configure` launches an interactive setup form in your terminal to configure:
 - Default LLM provider (Gemini, OpenAI, Groq, Cerebras, OpenRouter, Synthetic, Zai, Wormhole, OMLX)
 - Default model identifier
 - API key environment variable constant names (e.g. `$OPENAI_API_KEY`)
@@ -60,21 +60,21 @@ prompter config
 
 Settings are saved to `~/.config/prompter/config.json` using portable machine paths.
 
-When upgrading `prompter` in the future with `prompter update`, re-running `prompter config` safely refreshes and updates your configuration file with any new provider settings while preserving your existing preferences.
+Re-running `prompter configure` safely refreshes the configuration file while preserving existing preferences.
  
-5. Seed your prompt vault (optional):
+5. Browse your prompt vault (optional):
 
 ```bash
-prompter init
+prompter browse
 ```
 
-Populates `~/.config/prompter/prompts.d/` with curated starter prompts (`enhance`, `critique`, `rewrite`, `refactor`, `code-review`, `system-architect`, `git-commit`, `unit-test`). Run `prompter` to search and browse your vault interactively.
+The browser searches configured prompt directories recursively. If the primary vault is empty, it seeds the curated starter prompts before opening.
 
 
 ## Verification checklist
 
 - Command prints enhanced text
-- `prompter -v "test"` includes timing output
+- `prompter refine -v "test"` includes timing output
 
 ## Related docs
 

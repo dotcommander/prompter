@@ -4,15 +4,16 @@ Purpose: browse and select prompt files interactively.
 
 ## Triggering the Finder
 
-The finder appears when you run prompter without any input:
+The finder is launched using `prompter browse`:
 
 ```bash
-# No input: shows fuzzy finder
-prompter
+# Launch interactive fuzzy finder
+prompter browse
 ```
 
-An empty pipe is still treated as piped input and exits with an `empty input`
-error instead of opening the interactive finder.
+Running bare `prompter` on an interactive terminal displays help. An empty pipe
+or other piped input without a command exits with a `command required` error
+instead of opening the finder.
 
 ## How Search Works
 
@@ -44,7 +45,7 @@ When you select a prompt:
 
 ```bash
 # Save selected prompt to a file
-prompter > prompt.txt
+prompter browse > prompt.txt
 ```
 
 ## Configuration

@@ -13,94 +13,58 @@ import (
 )
 
 func printUsageTo(w io.Writer) {
-	fmt.Fprintf(w, `Usage: prompter [flags] [input]
-       prompter enhance <context>
-       prompter run <name-or-alias> [input]
-       prompter critique <prompt>
-       prompter rewrite --file notes.md --mode clean
-       prompter assemble <subject>
-       prompter find
-       prompter stats
-       prompter config
-       prompter styles
-       prompter providers
-       prompter update
-       prompter version
-       echo "prompt" | prompter
+	fmt.Fprint(w, `Usage: prompter <command> [flags]
 
-Enhances prompts and rewrites rough markdown into structured output.
+Transforms prompts, applies prompt templates, and builds offline image prompts.
 
 Commands:
-  enhance <context>     Run prompt enhancement on context
-  run <name-or-alias>  Run a catalog prompt with input from args, --file, or stdin
-  critique <prompt>     Analyze what's wrong with a prompt without rewriting
-  rewrite <content>     Clean and restructure rough markdown/doc text
-  assemble <subject>    Assemble an image prompt from local components
-  find                  Launch interactive prompt finder (default when no args on TTY)
-  stats                 Show local prompt component statistics
-  config                Configure prompter interactively (or view resolved settings)
-  styles                List available enhancement styles and rewrite modes
-  providers             List supported LLM providers and configuration status
-  update                Install the latest released version of prompter
-  version               Show prompter version and build information
-  init [dir]            Initialize prompt vault with curated starter prompts
-  (no args)             Show prompt finder
+  refine [input]              Improve a rough prompt
+  critique [input]            Analyze a prompt without rewriting it
+  rewrite [input]             Restructure rough Markdown or documentation
+  apply <prompt-name> [input] Apply a catalog prompt
+  browse                      Open the interactive prompt browser
+  image <subject>             Build an image-generation prompt offline
+  configure                   Configure prompter or print resolved settings
 
-Common Flags:
-  -p, --provider <name> Provider: %s
-  -m, --model <name>    Model to use
-  -f, --file <path>     Read prompt input from file
-  -o, --output <path>   Write generated prompt to file and stdout
-  -c, --copy            Copy generated prompt to clipboard
-      --stream          Stream tokens as they arrive
-      --dry-run         Show resolved runtime settings without an API call
-      --base-url <url>  Custom API endpoint
-  -v, --verbose         Show timing to stderr
-  -V, --version         Show prompter version
+Global flags:
+  -h, --help                 Show this help
+  -V, --version              Show version and build information
 
-Enhancement & Rewrite Flags:
-  -s, --style <name>    Enhancement style: %s
-      --mode <name>     Rewrite mode: %s
-
-Assemble Flags:
-      --profile <name>  Assembly profile: default, minimal, maximal
-      --count <n>       Number of assembled variations (default 1)
-      --categories <csv> Custom assembly modifier categories
-      --no-artist       Omit artist reference from assembled prompts
-      --no-platform     Omit platform reference from assembled prompts
-      --json            Output assemble/stats data as JSON
-      --seed <value>    Deterministic assembly seed
-`, provider.KnownNamesString(), strings.Join(availableStyles(), ", "), strings.Join(availableRewriteModes(), ", "))
+Run "prompter <command> --help" for command-specific flags.
+`)
 }
 
 func printCommandUsageTo(w io.Writer, cmd string) {
 	switch cmd {
-	case commandEnhance:
-		fmt.Fprintf(w, "Usage: prompter enhance [flags] <context>\n\nEnhances rough prompt input.\n\n  --style <name>     %s\n%s", strings.Join(availableStyles(), ", "), llmFlagHelp())
-	case commandRun:
-		fmt.Fprintf(w, "Usage: prompter run [flags] <name-or-alias> [input]\n\nRuns an exact catalog prompt name or alias with input from args, --file, or stdin.\n%s", llmFlagHelp())
+	case commandRefine:
+		fmt.Fprintf(w, "Usage: prompter refine [flags] [input]\n\nImproves rough prompt input.\n\n  -s, --style <name>  Style: %s\n%s", strings.Join(availableStyles(), ", "), llmFlagHelp())
+	case commandApply:
+		fmt.Fprintf(w, "Usage: prompter apply [flags] <prompt-name> [input]\n\nApplies an exact catalog prompt name or alias to input from args, --file, or stdin.\n%s", llmFlagHelp())
 	case commandCritique:
-		fmt.Fprintf(w, "Usage: prompter critique [flags] <prompt>\n\nAnalyzes flaws and missing constraints.\n%s", llmFlagHelp())
+		fmt.Fprintf(w, "Usage: prompter critique [flags] [input]\n\nAnalyzes flaws and missing constraints without rewriting.\n%s", llmFlagHelp())
 	case commandRewrite:
-		fmt.Fprintf(w, "Usage: prompter rewrite [flags] <content>\n\n  --mode <name>      %s\n%s", strings.Join(availableRewriteModes(), ", "), llmFlagHelp())
-	case commandAssemble:
-		fmt.Fprint(w, "Usage: prompter assemble [flags] <subject>\n\nAssembles an image prompt from local components.\n\nFlags: --profile, --count, --categories, --no-artist, --no-platform, --json, --seed, --file, --output, --copy\n")
-	case commandFind, commandSearch, commandBrowse:
-		fmt.Fprint(w, "Usage: prompter find\n\nLaunches the interactive prompt finder.\n")
-	case commandStats:
-		fmt.Fprint(w, "Usage: prompter stats [--json]\n\nShows local component-library statistics.\n")
-	case commandConfig:
-		fmt.Fprint(w, "Usage: prompter config\n\nLaunches the interactive configuration wizard when run on a terminal,\nor displays resolved non-secret configuration when piped.\n")
-	case commandStyles, commandModes:
-		fmt.Fprint(w, "Usage: prompter styles\n\nLists enhancement styles and rewrite modes.\n")
-	case commandProviders:
-		fmt.Fprint(w, "Usage: prompter providers\n\nLists providers and configuration status.\n")
-	case commandUpdate:
-		fmt.Fprint(w, "Usage: prompter update\n\nInstalls the latest released version using the Go toolchain.\n")
-	case commandVersion:
-		fmt.Fprint(w, "Usage: prompter version\n\nDisplays prompter version and build information.\n")
-	case commandInit:
-		fmt.Fprint(w, "Usage: prompter init [flags] [directory]\n\nInitializes the prompt vault with starter prompts (refactor, code-review, system-architect, etc.).\n\nFlags: --force (overwrite existing prompt files)\n")
+		fmt.Fprintf(w, "Usage: prompter rewrite [flags] [input]\n\nRestructures rough Markdown or documentation.\n\n  --mode <name>  Mode: %s\n%s", strings.Join(availableRewriteModes(), ", "), llmFlagHelp())
+	case commandImage:
+		fmt.Fprint(w, `Usage: prompter image [flags] <subject>
+
+Builds an image-generation prompt from local components. This command is offline and does not generate an image.
+
+Flags:
+      --profile <name>    Profile: default, minimal, maximal
+      --count <n>         Number of variations (default 1)
+      --categories <csv>  Modifier categories
+      --no-artist         Omit artist references
+      --no-platform       Omit platform references
+      --json              Emit JSON
+      --seed <value>      Deterministic seed
+  -f, --file <path>       Read the subject from a file
+  -o, --output <path>     Write output to a file and stdout
+  -c, --copy              Copy output to the clipboard
+`)
+	case commandBrowse:
+		fmt.Fprint(w, "Usage: prompter browse\n\nOpens the interactive local prompt browser.\n")
+	case commandConfigure:
+		fmt.Fprint(w, "Usage: prompter configure\n\nOpens the configuration wizard on a terminal, or prints resolved non-secret settings when output is redirected.\n")
 	default:
 		printUsageTo(w)
 	}
@@ -108,7 +72,17 @@ func printCommandUsageTo(w io.Writer, cmd string) {
 
 func llmFlagHelp() string {
 	return fmt.Sprintf(`
-Flags: --provider, --model, --file, --output, --copy, --stream, --dry-run, --base-url, --verbose
+Flags:
+  -p, --provider <name>  Provider name
+  -m, --model <name>     Model override
+  -f, --file <path>      Read input from a file
+  -o, --output <path>    Write output to a file and stdout
+  -c, --copy             Copy buffered output to the clipboard
+      --stream           Stream tokens to stdout
+      --dry-run          Show resolved settings without an API call
+      --base-url <url>   Override the provider endpoint
+  -v, --verbose          Show timing on stderr
+
 Providers: %s
 `, provider.KnownNamesString())
 }
@@ -225,34 +199,40 @@ func redactURLUserinfo(raw string) string {
 }
 
 // AppVersion is the baseline semver for prompter releases.
-const AppVersion = "0.1.1"
+const AppVersion = "0.2.0"
 
 func getVersionString() string {
 	info, ok := debug.ReadBuildInfo()
-	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
-		var commit, vcsTime string
-		if ok {
-			for _, s := range info.Settings {
-				if s.Key == "vcs.revision" {
-					commit = s.Value
-				}
-				if s.Key == "vcs.time" {
-					vcsTime = s.Value
-				}
-			}
-		}
-		if commit != "" {
-			if len(commit) > 7 {
-				commit = commit[:7]
-			}
-			if vcsTime != "" {
-				return fmt.Sprintf("prompter v%s (commit %s, built %s)", AppVersion, commit, vcsTime)
-			}
-			return fmt.Sprintf("prompter v%s (commit %s)", AppVersion, commit)
-		}
-		return fmt.Sprintf("prompter v%s", AppVersion)
+	if ok && info.Main.Version == "v"+AppVersion {
+		return fmt.Sprintf("prompter %s", info.Main.Version)
 	}
-	return fmt.Sprintf("prompter %s", info.Main.Version)
+
+	version := "v" + AppVersion
+	var commit, vcsTime string
+	if ok {
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				commit = s.Value
+			case "vcs.time":
+				vcsTime = s.Value
+			case "vcs.modified":
+				if s.Value == "true" {
+					version += "+dirty"
+				}
+			}
+		}
+	}
+	if len(commit) > 7 {
+		commit = commit[:7]
+	}
+	if commit != "" && vcsTime != "" {
+		return fmt.Sprintf("prompter %s (commit %s, built %s)", version, commit, vcsTime)
+	}
+	if commit != "" {
+		return fmt.Sprintf("prompter %s (commit %s)", version, commit)
+	}
+	return fmt.Sprintf("prompter %s", version)
 }
 
 func printVersion(w io.Writer) {

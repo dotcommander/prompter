@@ -163,30 +163,92 @@ type flags struct {
 	categories       string
 	seed             string
 	rewriteMode      string
-	modeSet          bool
 	command          string
 	promptName       string
 	outputValidation *OutputValidation
-	version          bool
-	force            bool
 	args             []string
 }
 
 func parseArgs(args []string) (*flags, error) {
-	f := &flags{}
-	if len(args) > 0 && isCommand(args[0]) {
-		f.command = args[0]
-		args = args[1:]
+	if len(args) == 0 {
+		return nil, fmt.Errorf("command required")
 	}
-	fs := flag.NewFlagSet("prompter", flag.ContinueOnError)
-	fs.Usage = func() {
-		if f.command != "" && f.command != "help" {
-			printCommandUsageTo(fs.Output(), f.command)
-		} else {
-			printUsageTo(fs.Output())
-		}
+	if !isCommand(args[0]) {
+		return nil, fmt.Errorf("unknown command %q", args[0])
 	}
 
+	f := &flags{command: args[0]}
+	args = args[1:]
+	fs := flag.NewFlagSet(f.command, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	if hasHelpFlag(args) {
+		printCommandUsageTo(os.Stderr, f.command)
+		return nil, flag.ErrHelp
+	}
+
+	registerFlags(fs, f)
+
+	args = interspersedFlagArgs(fs, args)
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	fs.Visit(func(visited *flag.Flag) {
+		if visited.Name == "style" || visited.Name == "s" {
+			f.styleSet = true
+		}
+	})
+
+	f.args = fs.Args()
+	if f.command == commandApply {
+		if len(f.args) == 0 {
+			return nil, fmt.Errorf("apply requires a prompt name or alias")
+		}
+		f.promptName = f.args[0]
+		f.args = f.args[1:]
+	}
+	if (f.command == commandBrowse || f.command == commandConfigure) && len(f.args) > 0 {
+		return nil, fmt.Errorf("%s does not accept arguments", f.command)
+	}
+	return f, nil
+}
+
+func hasHelpFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
+}
+
+func registerFlags(fs *flag.FlagSet, f *flags) {
+	switch f.command {
+	case commandRefine, commandCritique, commandRewrite, commandApply:
+		registerLLMFlags(fs, f)
+	}
+	switch f.command {
+	case commandRefine:
+		fs.StringVar(&f.style, "style", "", "")
+		fs.StringVar(&f.style, "s", "", "")
+	case commandRewrite:
+		fs.StringVar(&f.rewriteMode, "mode", "clean", "")
+	case commandImage:
+		registerOutputFlags(fs, f)
+		fs.StringVar(&f.profile, "profile", "default", "")
+		fs.IntVar(&f.count, "count", 1, "")
+		fs.BoolVar(&f.json, "json", false, "")
+		fs.BoolVar(&f.noArtist, "no-artist", false, "")
+		fs.BoolVar(&f.noPlatform, "no-platform", false, "")
+		fs.StringVar(&f.categories, "categories", "", "")
+		fs.StringVar(&f.seed, "seed", "", "")
+	}
+}
+
+func registerLLMFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.provider, "provider", "", "")
 	fs.StringVar(&f.provider, "p", "", "")
 	fs.StringVar(&f.model, "model", "", "")
@@ -194,73 +256,23 @@ func parseArgs(args []string) (*flags, error) {
 	fs.StringVar(&f.baseURL, "base-url", "", "")
 	fs.BoolVar(&f.verbose, "verbose", false, "")
 	fs.BoolVar(&f.verbose, "v", false, "")
-	fs.BoolVar(&f.version, "version", false, "")
-	fs.BoolVar(&f.version, "V", false, "")
-	fs.BoolVar(&f.force, "force", false, "")
 	fs.BoolVar(&f.stream, "stream", false, "")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "")
+	registerOutputFlags(fs, f)
+}
+
+func registerOutputFlags(fs *flag.FlagSet, f *flags) {
 	fs.BoolVar(&f.copy, "copy", false, "")
 	fs.BoolVar(&f.copy, "c", false, "")
 	fs.StringVar(&f.file, "file", "", "")
 	fs.StringVar(&f.file, "f", "", "")
 	fs.StringVar(&f.output, "output", "", "")
 	fs.StringVar(&f.output, "o", "", "")
-	fs.StringVar(&f.style, "style", "", "")
-	fs.StringVar(&f.style, "s", "", "")
-	fs.StringVar(&f.profile, "profile", "default", "")
-	fs.IntVar(&f.count, "count", 1, "")
-	fs.BoolVar(&f.json, "json", false, "")
-	fs.BoolVar(&f.noArtist, "no-artist", false, "")
-	fs.BoolVar(&f.noPlatform, "no-platform", false, "")
-	fs.StringVar(&f.categories, "categories", "", "")
-	fs.StringVar(&f.seed, "seed", "", "")
-	fs.StringVar(&f.rewriteMode, "mode", "clean", "")
-
-	args = interspersedFlagArgs(fs, args)
-	if err := fs.Parse(args); err != nil {
-		return nil, err
-	}
-	if f.version {
-		f.command = commandVersion
-	}
-	fs.Visit(func(visited *flag.Flag) {
-		switch visited.Name {
-		case "style", "s":
-			f.styleSet = true
-		case "mode":
-			f.modeSet = true
-		}
-	})
-
-	positional := fs.Args()
-	if f.command != "" {
-		f.args = positional
-	} else if len(positional) > 0 {
-		if isCommand(positional[0]) {
-			f.command = positional[0]
-			f.args = positional[1:]
-		} else {
-			f.args = positional
-		}
-	}
-	if f.command == commandRun {
-		if len(f.args) == 0 {
-			return nil, fmt.Errorf("run requires a prompt name or alias")
-		}
-		f.promptName = f.args[0]
-		f.args = f.args[1:]
-	}
-	if f.command == commandUpdate && (len(f.args) > 0 || fs.NFlag() > 0) {
-		return nil, fmt.Errorf("update does not accept arguments or flags")
-	}
-	return f, nil
 }
 
 func isCommand(value string) bool {
 	switch value {
-	case "help", commandEnhance, commandCritique, commandRun, commandRewrite, commandAssemble, commandStats,
-		commandFind, commandSearch, commandBrowse, commandConfig, commandStyles, commandModes, commandProviders,
-		commandUpdate, commandVersion, commandInit:
+	case commandRefine, commandCritique, commandRewrite, commandApply, commandBrowse, commandImage, commandConfigure:
 		return true
 	default:
 		return false
@@ -388,10 +400,8 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 		return fmt.Errorf("--copy cannot be used with --stream")
 	}
 	switch f.command {
-	case commandAssemble:
+	case commandImage:
 		return runAssemble(f, cfg)
-	case commandStats:
-		return runStats(f, cfg)
 	}
 
 	prov, err := resolveProvider(cfg, f.provider, f.baseURL)
@@ -405,6 +415,9 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 	}
 	if f.command == commandRewrite {
 		input = preprocessRewriteInput(input)
+		if strings.TrimSpace(input) == "" {
+			return fmt.Errorf("rewrite preprocessing removed all content; refusing to send an empty request")
+		}
 	}
 
 	modelName := prov.Model()
@@ -504,22 +517,18 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 }
 
 func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags, cfg *config.Config, input string, timeout time.Duration) {
-	command := f.command
-	if command == "" {
-		command = "enhance"
-	}
 	style := f.style
-	if style == "" && f.command != commandCritique && f.command != commandRun {
+	if style == "" && f.command == commandRefine {
 		style = "default"
 	}
 	fmt.Fprintf(w, "Dry run: no API call made\n")
 	fmt.Fprintf(w, "Provider: %s\n", prov.Name())
 	fmt.Fprintf(w, "Model: %s\n", modelName)
-	fmt.Fprintf(w, "Command: %s\n", command)
-	if f.command == "rewrite" {
+	fmt.Fprintf(w, "Command: %s\n", f.command)
+	if f.command == commandRewrite {
 		fmt.Fprintf(w, "Mode: %s\n", f.rewriteMode)
 	}
-	if f.command == commandRun {
+	if f.command == commandApply {
 		fmt.Fprintf(w, "Prompt: %s\n", f.promptName)
 		if f.outputValidation != nil {
 			fmt.Fprintf(w, "Output validation: enabled (%d retry, semantic=%t)\n", f.outputValidation.Retries, f.outputValidation.SemanticValidation)
@@ -663,22 +672,26 @@ func singleOrMany(results []*AssembledPrompt) any {
 	return results
 }
 
-func commandRequiresInput(command string) bool {
-	return command == "" || command == commandEnhance || command == commandCritique || command == commandRun || command == commandRewrite || command == commandAssemble
-}
-
 // -----------------------------------------------------------------------------
 // Main
 // -----------------------------------------------------------------------------
 
 func main() {
-	// Fast-path instant exit for zero-overhead version and help queries
+	// Fast-path root help and version without loading configuration.
+	if len(os.Args) == 1 {
+		if isStdinPiped() {
+			fmt.Fprintln(os.Stderr, "error: command required; use 'prompter refine' for prompt input")
+			os.Exit(2)
+		}
+		printUsage()
+		return
+	}
 	if len(os.Args) == 2 {
 		switch os.Args[1] {
-		case "version", "--version", "-V", "-v":
+		case "--version", "-V":
 			printVersion(os.Stdout)
 			return
-		case "help", "--help", "-h":
+		case "--help", "-h":
 			printUsage()
 			return
 		}
@@ -686,35 +699,11 @@ func main() {
 
 	f, err := parseArgs(os.Args[1:])
 	if err != nil {
-		// ContinueOnError: -h prints usage and returns ErrHelp; other errors are
-		// already printed by the FlagSet. Either way, exit cleanly.
 		if errors.Is(err, flag.ErrHelp) {
 			os.Exit(0)
 		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(2)
-	}
-
-	if f.command == "help" {
-		if len(f.args) > 0 {
-			printCommandUsageTo(os.Stderr, f.args[0])
-		} else {
-			printUsage()
-		}
-		return
-	}
-	if f.command == commandStyles || f.command == commandModes {
-		printStyles(os.Stdout)
-		return
-	}
-	if f.command == commandUpdate {
-		if err := runUpdate(context.Background(), os.Stdout, os.Stderr, runUpdateCommand); err != nil {
-			exitWithError(err)
-		}
-		return
-	}
-	if f.command == commandVersion {
-		printVersion(os.Stdout)
-		return
 	}
 
 	cfg, err := config.Load()
@@ -722,25 +711,14 @@ func main() {
 		exitWithError(err)
 	}
 
-	if f.command == commandInit {
-		targetDir := ""
-		if len(f.args) > 0 {
-			targetDir = f.args[0]
-		}
-		if err := runInit(os.Stdout, os.Stderr, cfg, targetDir, f.force); err != nil {
-			exitWithError(err)
-		}
-		return
-	}
-
 	switch f.command {
-	case commandFind, commandSearch, commandBrowse:
+	case commandBrowse:
 		if err := showFinder(cfg); err != nil {
 			exitWithError(err)
 		}
 		return
-	case commandConfig:
-		if isStdinPiped() || len(f.args) > 0 || f.dryRun || !isStdoutTerminal() {
+	case commandConfigure:
+		if isStdinPiped() || !isStdoutTerminal() {
 			printConfig(os.Stdout, cfg)
 			return
 		}
@@ -748,22 +726,12 @@ func main() {
 			exitWithError(err)
 		}
 		return
-	case commandProviders:
-		printProviders(os.Stdout, cfg)
-		return
 	}
 
-	if f.command == commandEnhance || f.command == commandCritique || f.command == commandRun || f.command == commandRewrite || f.command == commandAssemble {
+	if f.command == commandRefine || f.command == commandCritique || f.command == commandApply || f.command == commandRewrite || f.command == commandImage {
 		if len(f.args) == 0 && f.file == "" && !isStdinPiped() {
 			exitWithError(fmt.Errorf("%s requires input", f.command))
 		}
-	}
-
-	if commandRequiresInput(f.command) && len(f.args) == 0 && f.file == "" && !isStdinPiped() {
-		if err := showFinder(cfg); err != nil {
-			exitWithError(err)
-		}
-		return
 	}
 
 	if err := resolveCommandSystemPrompt(f, cfg); err != nil {
@@ -811,9 +779,12 @@ func ensurePromptVault(cfg *config.Config) ([]PromptEntry, []string, error) {
 		_ = os.MkdirAll(primaryDir, 0o755)
 	}
 
-	entries, err := scanPromptDirs(dirs)
-	if err != nil {
-		return nil, nil, fmt.Errorf("scan prompts: %w", err)
+	var entries []PromptEntry
+	if primaryDir != "" {
+		entries, err = ScanPromptsDir(primaryDir)
+		if err != nil {
+			return nil, nil, fmt.Errorf("scan primary prompt directory: %w", err)
+		}
 	}
 
 	if len(entries) == 0 && primaryDir != "" {
@@ -821,9 +792,15 @@ func ensurePromptVault(cfg *config.Config) ([]PromptEntry, []string, error) {
 		var initOut, initErr bytes.Buffer
 		if initErrVal := runInit(&initOut, &initErr, cfg, primaryDir, false); initErrVal == nil {
 			fmt.Fprintf(os.Stderr, "Seeded starter prompts in %s\n", primaryDir)
-			entries, _ = scanPromptDirs(dirs)
+			entries, _ = ScanPromptsDir(primaryDir)
 		}
 	}
+
+	secondaryEntries, err := scanPromptDirs(dirs[1:])
+	if err != nil {
+		return nil, nil, fmt.Errorf("scan prompts: %w", err)
+	}
+	entries = append(entries, secondaryEntries...)
 
 	return entries, dirs, nil
 }
@@ -836,7 +813,7 @@ func showFinder(cfg *config.Config) error {
 	}
 
 	if len(entries) == 0 {
-		fmt.Fprintf(os.Stderr, "No prompts found in %s\n\nRun 'prompter init' to install starter prompts or add .md files.\n", strings.Join(dirs, ", "))
+		fmt.Fprintf(os.Stderr, "No prompts found in %s. Add a .md prompt file and run 'prompter browse' again.\n", strings.Join(dirs, ", "))
 		return nil
 	}
 

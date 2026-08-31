@@ -27,7 +27,7 @@ Fix:
    gcloud auth application-default login
    ```
 3. For local loopback providers (`wormhole` or `omlx`), no API key is required.
-4. Run `prompter "test"` again.
+4. Run `prompter refine "test"` again.
 
 ## Provider and model failures
 
@@ -48,19 +48,19 @@ Default is 60s (streaming uses at least 180s). For other provider errors:
 
 ```bash
 # Try a known provider
-prompter -p openai "test"
+prompter refine -p openai "test"
 
 # Override model
-prompter -m gpt-4o "test"
+prompter refine -m gpt-4o "test"
 
 # Override endpoint
-prompter --base-url https://api.example.com "test"
+prompter refine --base-url https://api.example.com "test"
 ```
 
 For `wormhole`, `--base-url` is the proxy's OpenAI-compatible `/v1` URL:
 
 ```bash
-prompter -p wormhole --base-url http://127.0.0.1:8080/v1 "test"
+prompter refine -p wormhole --base-url http://127.0.0.1:8080/v1 "test"
 ```
 
 Use a `provider/model` identifier when the request must route to a specific
@@ -68,17 +68,17 @@ Wormhole upstream, for example `groq/openai/gpt-oss-120b`.
 
 ## Finder failures
 
-If `prompter` with no input does not show usable results:
+If `prompter browse` does not show usable results:
 
 1. Verify `prompts_dir` exists.
 2. Verify it contains `.md` prompt files.
-3. Run `prompter` again.
+3. Run `prompter browse` again.
 
 See `finder.md` and `prompt-files.md` for finder and file rules.
 
 ## Debugging checklist
 
-- Run `prompter -v "test"` and inspect stderr
+- Run `prompter refine -v "test"` and inspect stderr
 - Confirm config JSON is valid
 - Confirm API key is valid for selected provider
 - For `wormhole`, check `http://127.0.0.1:8080/health` and `/v1/models`

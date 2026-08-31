@@ -8,7 +8,7 @@ triggers:
   - review this PR
   - check for bugs
 examples:
-  - git diff main...HEAD | prompter run code-review
+  - git diff main...HEAD | prompter apply code-review
 ---
 
 You are a senior staff engineer and security auditor conducting a rigorous, actionable code review.

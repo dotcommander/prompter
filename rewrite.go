@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 var rewriteModes = []string{"clean", "academic", "blog", "extract", "code", "synthesis"}
@@ -21,7 +22,7 @@ func resolveRewritePrompt(mode string) (string, error) {
 	}
 	if !slices.Contains(rewriteModes, mode) {
 		if slices.Contains(availableStyles(), mode) {
-			return "", fmt.Errorf("unknown rewrite mode %q: %q is an enhancement style (use 'prompter --style %s') (valid: %s)", mode, mode, mode, strings.Join(availableRewriteModes(), ", "))
+			return "", fmt.Errorf("unknown rewrite mode %q: %q is an enhancement style (use 'prompter refine --style %s') (valid: %s)", mode, mode, mode, strings.Join(availableRewriteModes(), ", "))
 		}
 		return "", fmt.Errorf("unknown rewrite mode %q (valid: %s)", mode, strings.Join(availableRewriteModes(), ", "))
 	}
@@ -34,7 +35,7 @@ var rewriteCruftPatterns = []string{
 	"download now", "get started", "upgrade now", "subscribe",
 	"share this", "follow us", "cookie", "privacy policy",
 	"terms of service", "all rights reserved", "powered by",
-	"built with", "copyright 20", "click here",
+	"built with", "click here",
 	"try for free", "start free", "free trial",
 }
 
@@ -67,10 +68,18 @@ func preprocessRewriteInput(content string) string {
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
+// cruftDecoration is trimmed from both ends of a line before whole-line
+// comparison, so standalone markers like "— Sign in —" or "Subscribe:" still
+// match while sentences that merely mention a cruft phrase are preserved.
+var cruftDecoration = " \t:-—|*·•"
+
 func isRewriteCruft(line string) bool {
-	lower := strings.ToLower(line)
+	trimmed := strings.Trim(strings.TrimSpace(line), cruftDecoration)
+	if trimmed == "" {
+		return false
+	}
 	for _, pattern := range rewriteCruftPatterns {
-		if strings.Contains(lower, pattern) {
+		if strings.EqualFold(trimmed, pattern) {
 			return true
 		}
 	}
@@ -78,5 +87,13 @@ func isRewriteCruft(line string) bool {
 }
 
 func isRewriteBinaryLine(line string) bool {
-	return len(line) > 100 && !strings.Contains(line, " ")
+	// Structural rule: drop lines that are actually binary (invalid UTF-8 or
+	// control characters). Length-without-spaces deleted legitimate long URLs
+	// and space-less scripts (e.g. CJK prose).
+	if !utf8.ValidString(line) {
+		return true
+	}
+	return strings.ContainsFunc(line, func(r rune) bool {
+		return (r < ' ' || r == 0x7f) && r != '\t' && r != '\r'
+	})
 }

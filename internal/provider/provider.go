@@ -172,6 +172,9 @@ func (p *chatProvider) Call(ctx context.Context, req CallRequest) (string, error
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("%s: no response choices", p.name)
 	}
+	if resp.Choices[0].FinishReason == "length" {
+		return "", p.lengthLimitError(false)
+	}
 	return resp.Choices[0].Message.Content, nil
 }
 
@@ -184,9 +187,14 @@ func (p *chatProvider) StreamCall(ctx context.Context, req CallRequest, w io.Wri
 		}
 	}()
 
-	var wrote bool
+	var wrote, truncated bool
 	for stream.Next() {
 		chunk := stream.Current()
+		for _, choice := range chunk.Choices {
+			if choice.FinishReason == "length" {
+				truncated = true
+			}
+		}
 		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
 			if _, err := io.WriteString(w, chunk.Choices[0].Delta.Content); err != nil {
 				return fmt.Errorf("%s stream write: %w", p.name, err)
@@ -197,10 +205,24 @@ func (p *chatProvider) StreamCall(ctx context.Context, req CallRequest, w io.Wri
 	if err := stream.Err(); err != nil {
 		return fmt.Errorf("%s stream: %w", p.name, err)
 	}
+	if truncated {
+		return p.lengthLimitError(true)
+	}
 	if !wrote {
 		return fmt.Errorf("%s: stream produced no output", p.name)
 	}
 	return nil
+}
+
+func (p *chatProvider) lengthLimitError(streamed bool) error {
+	output := "output is truncated"
+	if streamed {
+		output = "partial output may already have been emitted"
+	}
+	if p.maxOutputTokens > 0 {
+		return fmt.Errorf("%s: generation reached the configured max output token limit (%d); %s; increase max_output_tokens or shorten the requested output", p.name, p.maxOutputTokens, output)
+	}
+	return fmt.Errorf("%s: generation reached its output token limit; %s; increase max_output_tokens or shorten the requested output", p.name, output)
 }
 
 // -----------------------------------------------------------------------------

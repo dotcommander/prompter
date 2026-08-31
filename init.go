@@ -31,6 +31,20 @@ func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string, for
 		return fmt.Errorf("read embedded starter prompts: %w", err)
 	}
 
+	// Pre-scan: refuse to overwrite through symlinks before writing anything.
+	var symlinked []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		if info, err := os.Lstat(filepath.Join(targetDir, entry.Name())); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			symlinked = append(symlinked, entry.Name())
+		}
+	}
+	if force && len(symlinked) > 0 {
+		return fmt.Errorf("refusing --force: symlinked prompt files would overwrite files outside the vault: %s", strings.Join(symlinked, ", "))
+	}
+
 	var written []string
 	var skipped []string
 
@@ -40,7 +54,7 @@ func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string, for
 		}
 
 		destPath := filepath.Join(targetDir, entry.Name())
-		if _, err := os.Stat(destPath); err == nil && !force {
+		if _, err := os.Lstat(destPath); err == nil && !force {
 			skipped = append(skipped, entry.Name())
 			continue
 		}
@@ -64,15 +78,15 @@ func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string, for
 		}
 	}
 	if len(skipped) > 0 {
-		fmt.Fprintln(stdout, "\nSkipped existing prompts (use --force to overwrite):")
+		fmt.Fprintln(stdout, "\nSkipped existing prompts (--force overwrites regular files; symlinks are always refused):")
 		for _, name := range skipped {
 			fmt.Fprintf(stdout, "  • %s\n", name)
 		}
 	}
 
 	fmt.Fprintln(stdout, "\nReady! Try running:")
-	fmt.Fprintln(stdout, "  prompter run refactor \"def my_func(): ...\"")
-	fmt.Fprintln(stdout, "  prompter                    (to search & browse your vault)")
+	fmt.Fprintln(stdout, "  prompter apply refactor \"def my_func(): ...\"")
+	fmt.Fprintln(stdout, "  prompter browse             (to search your vault)")
 
 	return nil
 }

@@ -46,11 +46,9 @@ func TestRunUpdateReturnsInstallFailure(t *testing.T) {
 	}
 }
 
-func TestParseArgsUpdateRejectsArgumentsAndFlags(t *testing.T) {
+func TestParseArgsUpdateCommandRemoved(t *testing.T) {
 	t.Parallel()
-	for _, args := range [][]string{{"update", "extra"}, {"update", "--verbose"}} {
-		if _, err := parseArgs(args); err == nil || !strings.Contains(err.Error(), "does not accept") {
-			t.Fatalf("parseArgs(%q) error = %v, want rejected update arguments", args, err)
-		}
+	if _, err := parseArgs([]string{"update"}); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("parseArgs(update) error = %v, want unknown command", err)
 	}
 }

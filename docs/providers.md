@@ -3,8 +3,8 @@
 Purpose: provider implementation contract and extension path.
 
 ```bash
-prompter -p wormhole "tighten this prompt"
-prompter -p wormhole --base-url http://127.0.0.1:8080/v1 "tighten this prompt"
+prompter refine -p wormhole "tighten this prompt"
+prompter refine -p wormhole --base-url http://127.0.0.1:8080/v1 "tighten this prompt"
 ```
 
 ## Prerequisites
@@ -69,7 +69,7 @@ Current registered providers: `cerebras`, `gemini`, `groq`, `omlx`, `openai`, `o
 `omlx` targets the local MLX server on localhost:8000:
 
 - `api_key` is optional for unauthenticated local access (defaults to `"local"`).
-- `model` defaults to `LFM2.5-2.6B-4bit`.
+- `model` defaults to `Ornith-1.5-35B-A3B-oQ4e-mtp`.
 - `base_url` defaults to `http://127.0.0.1:8000/v1`.
 - Standard OpenAI chat completions endpoint.
 
