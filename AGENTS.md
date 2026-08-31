@@ -1,0 +1,191 @@
+# AGENTS.md
+
+> Architectural specification, operational invariants, and execution reference for AI coding agents and core contributors working on the `prompter` codebase.
+
+---
+
+## 1. Overview & Core Invariants
+
+`prompter` is a zero-dependency (core runtime), high-performance Go CLI tool that transforms rough prompt text, unstructured notes, and fragmented ideas into production-grade AI prompts. It also provides offline deterministic image prompt assembly, Markdown restructuring, prompt output validation, and an interactive Bubble Tea fuzzy finder across local prompt vaults.
+
+### Non-Negotiable Engineering Principles
+- **Unix Composability**: Clean, machine-usable prompt output is written strictly to `stdout`. Progress spinners, debug logs, timing metrics, and dry-run diagnostics go exclusively to `stderr`.
+- **Fail Fast, Fail Loud**: Never introduce silent fallbacks, magic defaults that mask missing credentials, or silent error suppression. If configuration is missing or an API error occurs, exit immediately with a distinct non-zero exit code (`1` for errors, `130` for `SIGINT`).
+- **Zero-Touch Startup**: Operates out of the box with Google Application Default Credentials (ADC) for Gemini or standard environment variables (`OPENAI_API_KEY`, `GROQ_API_KEY`, etc.) without requiring an initial configuration file.
+- **Offline First Where Applicable**: Image prompt assembly (`assemble`) and component statistics (`stats`) execute 100% offline without remote network requests.
+- **Portable Configuration**: Any generated or saved `~/.config/prompter/config.json` uses portable `~` paths (e.g. `"prompts_dir": "~/.config/prompter/prompts.d"`), dynamically expanded at runtime on macOS, Linux, and Windows.
+
+---
+
+## 2. Capabilities & Subcommand Map
+
+| Command | Usage | Description | Input Source |
+|---------|-------|-------------|--------------|
+| *(default)* | `prompter [input]` / `echo "..." \| prompter` | Enhances rough prompt input using the active LLM provider. | Positional args, `--file`, or piped stdin |
+| *(no args)* | `prompter` | Launches interactive Bubble Tea fuzzy finder across local prompt directories (`prompts_dir`). Selection is copied to clipboard and emitted to `stdout`. | Interactive TTY |
+| `find` | `prompter find` | Explicit command to launch the interactive prompt finder. | Interactive TTY |
+| `run` | `prompter run <name-or-alias> [input]` | Runs a catalog prompt by exact name or alias; strips frontmatter and uses prompt body as system prompt. | Positional args, `--file`, or piped stdin |
+| `enhance` | `prompter enhance <context>` | Explicit subcommand to run prompt enhancement on context. | Positional args, `--file`, or piped stdin |
+| `critique` | `prompter critique <prompt>` | Analyzes flaws, ambiguities, and missing constraints without rewriting. | Positional args, `--file`, or piped stdin |
+| `rewrite` | `prompter rewrite --file notes.md --mode clean` | Cleans, organizes, and restructures rough Markdown and documentation. | Positional args, `--file`, or piped stdin |
+| `assemble` | `prompter assemble <subject>` | Assembles a detailed image prompt from local modular components. | Offline / Positional args |
+| `stats` | `prompter stats` | Calculates and displays statistics for the local image component library. | Offline |
+| `config` | `prompter config` | Launches interactive TUI configuration wizard (or displays resolved non-secret config when piped/non-interactive). | Interactive TTY / Pipe |
+| `styles` | `prompter styles` / `prompter modes` | Lists available enhancement styles and rewrite modes with descriptions. | Output to stdout |
+| `providers` | `prompter providers` | Lists supported LLM providers, models, base URLs, and credential status. | Output to stdout |
+| `init` | `prompter init [dir]` | Seeds local vault with starter prompts (`refactor`, `code-review`, etc.). | Offline / Local FS |
+| `update` | `prompter update` | Installs the latest released version using the Go toolchain (`go install`). | Toolchain execution |
+| `version` | `prompter version` / `-V` / `--version` | Displays version and build information from Go build metadata. | Output to stdout |
+| `help` | `prompter help [command]` / `-h` / `--help` | Prints root usage information or contextual help for a subcommand. | Output to stdout/stderr |
+
+---
+
+## 3. Configuration & Precedence Hierarchy
+
+Settings are resolved using a strict precedence order:
+`CLI Flags > Environment Variables > ~/.config/prompter/config.json > Built-in Defaults`
+
+### Configuration Keys & Environment Variables
+
+| Config JSON Field | Environment Variable | Default Value | Purpose |
+|-------------------|----------------------|---------------|---------|
+| `provider` | `PROMPTER_PROVIDER` | `gemini` | Active LLM provider backend |
+| `prompt_file` | `PROMPTER_PROMPT_FILE` | `""` (uses embedded default) | Custom enhancement system prompt file |
+| `prompts_dir` | `PROMPTER_PROMPTS_DIR` | `~/.config/prompter/prompts.d` | Primary prompt directory for finder and catalog execution |
+| `prompts_dirs` | `PROMPTER_PROMPTS_DIRS` | `["~/.config/prompter/prompts.d", "~/.config/roles/prompts"]` | List of prompt scan directories |
+| `components_file` | `PROMPTER_COMPONENTS_FILE` | `~/.config/prompter/components.json` | JSON component library for image assembly |
+| `effort` | `PROMPTER_EFFORT` | `low` | Reasoning effort level (`low`, `medium`, `high`) |
+| `timeout` | `PROMPTER_TIMEOUT` | `60` | Request timeout in seconds (streaming enforces min `180`s) |
+| `max_output_tokens` | `PROMPTER_MAX_OUTPUT_TOKENS` | `4096` | Max tokens generated in completion |
+| `max_retries` | `PROMPTER_MAX_RETRIES` | `3` | HTTP retry attempts on transient network/API failures |
+| `default_copy` | `PROMPTER_DEFAULT_COPY` | `false` | Automatically copy non-streamed results to system clipboard |
+| `<provider>.api_key` | `<PROVIDER>_API_KEY` or `PROMPTER_<PROVIDER>_API_KEY` | `""` | Provider authentication API key |
+| `<provider>.key_env` | `PROMPTER_<PROVIDER>_KEY_ENV` | `""` | Custom env var name containing the API key constant |
+| `<provider>.model` | `<PROVIDER>_MODEL` or `PROMPTER_<PROVIDER>_MODEL` | Provider default | Default model identifier override |
+| `<provider>.base_url` | `<PROVIDER>_BASE_URL` or `PROMPTER_<PROVIDER>_BASE_URL` | Provider default | Custom API endpoint override |
+
+### Provider-Specific Conventions
+- **`gemini`**: Uses Google Cloud Vertex AI `GenerateContent` with Application Default Credentials (ADC) by default (`gemini.project_id` defaults to `grimoire-2025`, `gemini.location` to `global`). Also supports Google AI Studio endpoint when `GEMINI_API_KEY` is provided.
+- **`openai`**: Uses the OpenAI Responses API with `Instructions` for system prompt separation.
+- **`chat providers` (`cerebras`, `groq`, `openrouter`, `synthetic`, `zai`)**: Standard Chat Completions API with structured `{role: "system"}` and `{role: "user"}` payloads.
+- **`wormhole`**: Connects to local loopback proxy (`http://127.0.0.1:8080/v1`). Supports provider routing prefixes (e.g. `-m groq/openai/gpt-oss-120b`). API key is optional for unauthenticated local instances.
+- **`omlx`**: Connects to local Apple MLX server (`http://127.0.0.1:8000/v1`) with default model `LFM2.5-2.6B-4bit`.
+
+---
+
+## 4. Codebase Architecture Map
+
+```
+prompter/
+├── main.go                     # Entry point, CLI orchestration, flag parsing, signal handling
+├── cli_flow.go                 # Flag interspersing (interspersedFlagArgs) & prompt resolution
+├── cli_metadata.go             # Usage output, discovery commands (config, styles, providers)
+├── config_tui.go               # Interactive Huh/BubbleTea TUI configuration wizard
+├── finder.go                   # Bubble Tea interactive weighted fuzzy finder
+├── prompts.go                  # Recursive prompt scanning, YAML frontmatter parser
+├── components.go               # Offline image prompt assembler and component statistics
+├── rewrite.go                  # Markdown restructuring modes (clean, academic, code, etc.)
+├── output_validation.go        # Deterministic & semantic output validator with retry loop
+├── update.go                   # Self-update command runner (go install latest)
+├── embed.go                    # Embedded FS bindings for default prompts & styles
+├── internal/
+│   ├── config/
+│   │   ├── config.go           # Viper config loader, serializer, path expand/unexpand
+│   │   └── config_test.go      # Config resolution and portability unit tests
+│   └── provider/
+│       ├── provider.go         # Provider interface, Chat & OpenAI client wrappers, Registry
+│       ├── gemini.go           # Vertex AI & AI Studio client implementation
+│       └── provider_test.go    # Provider payload characterization & registry unit tests
+├── doctests/
+│   ├── finder_test.go          # Asserts finder documentation matches implementation
+│   ├── flags_test.go           # Asserts flags and defaults documentation accuracy
+│   └── providers_test.go       # Asserts registered provider list consistency
+└── prompts/                    # Embedded markdown prompt templates and styles
+```
+
+---
+
+## 5. Execution & Data Flow
+
+```mermaid
+flowchart TD
+    Start([CLI Invocation]) --> ParseArgs[Parse CLI Args & Flags via interspersedFlagArgs]
+    ParseArgs --> LoadConfig[Load Config: CLI > Env > config.json > Defaults]
+    
+    LoadConfig --> CheckMode{Input or Subcommand?}
+    
+    CheckMode -- "No input & TTY (Interactive)" --> FinderFlow[Show Bubble Tea Finder]
+    FinderFlow --> ScanPrompts[Scan prompt dirs for .md files]
+    ScanPrompts --> FuzzySearch[Weighted Fuzzy Search & Select]
+    FuzzySearch --> OutputFinder[Copy to Clipboard + Print to stdout]
+    
+    CheckMode -- "config (Interactive TTY)" --> ConfigTUI[Run Huh Config Wizard]
+    ConfigTUI --> SaveConfig[Save ~/.config/prompter/config.json with portable ~ paths]
+    
+    CheckMode -- "assemble" --> AssembleFlow[Image Assembly]
+    AssembleFlow --> LocalComponents[Combine Local Components in Memory]
+    LocalComponents --> OutputResult[Write to stdout / --output / Clipboard]
+    
+    CheckMode -- "stats" --> StatsFlow[Calculate Component Library Stats]
+    StatsFlow --> PrintStats[Print Stats to stdout]
+    
+    CheckMode -- "update" --> RunUpdate[Execute go install github.com/dotcommander/prompter@latest]
+    
+    CheckMode -- "enhance / critique / rewrite / run / default" --> LLMFlow[LLM Pipeline]
+    LLMFlow --> ResolvePrompt[Resolve System Prompt & Mode/Style]
+    ResolvePrompt --> ResolveProv[Resolve Provider from Registry & Validate Keys]
+    ResolveProv --> ReadInput[Read Input: args / --file / stdin max 1MB]
+    ReadInput --> DryRunCheck{--dry-run?}
+    
+    DryRunCheck -- Yes --> PrintDryRun[Print Resolved Config & System Prompt to stderr]
+    DryRunCheck -- No --> StreamCheck{--stream?}
+    
+    StreamCheck -- Yes --> StreamCall[prov.StreamCall: Stream tokens to stdout]
+    StreamCheck -- No --> UnaryCall[prov.Call: Show Stderr Spinner]
+    UnaryCall --> ValidateCheck{Output Validation Declared?}
+    
+    ValidateCheck -- Yes (Invalid & Retries Left) --> RetryCall[Append Violations to Prompt & Retry Call]
+    ValidateCheck -- Yes (Valid) / No --> OutputResult
+```
+
+### Data Transformations
+1. **Input Normalization**: Ingests CLI args, stdin, or file paths up to a hard ceiling of 1 MB (`readLimited`).
+2. **Context Assembly**: Combines system prompts (embedded templates or custom catalog files) with user input into a unified `provider.CallRequest{Model, SystemPrompt, UserPrompt, Effort}`.
+3. **Payload Formatting**:
+   - **OpenAI**: Encoded for OpenAI Responses API with `Instructions`.
+   - **Gemini**: Encoded for Vertex AI `GenerateContent` using Google ADC bearer token or AI Studio key.
+   - **Chat Completions**: Standard JSON payload with `{role: "system", content: ...}` and `{role: "user", content: ...}`.
+4. **Output Routing**:
+   - Streamed or buffered prompt text is written strictly to `stdout` or `--output`.
+   - Progress spinners, diagnostics, and metrics are written to `stderr`.
+   - System clipboard is populated via `atotto/clipboard` when `--copy` or `default_copy: true` is active.
+
+---
+
+## 6. Testing, Verification & Operational Invariants
+
+### Development & Verification Commands
+Always verify changes across all test packages before committing:
+
+```bash
+# Build local binary
+go build -o prompter .
+
+# Run all unit tests (use GOWORK=off if parent go.work exists)
+GOWORK=off go test -count=1 ./...
+
+# Run documentation consistency tests
+GOWORK=off go test -count=1 ./doctests/...
+
+# Static analysis and formatting
+go vet ./...
+gofmt -l .
+```
+
+### Operational Rules for Agents
+1. **Doctest Compliance**:
+   - `doctests/finder_test.go` asserts that `docs/finder.md` explicitly documents stdout behavior using phrases like `Stdout`/`printed to stdout`.
+   - `doctests/flags_test.go` asserts required flag documentation in `docs/flags.md`.
+   - `doctests/providers_test.go` asserts that all registered provider names (`cerebras`, `gemini`, `groq`, `omlx`, `openai`, `openrouter`, `synthetic`, `wormhole`, `zai`) are documented in `docs/providers.md` and `AGENTS.md`.
+2. **Flag Interspersing**: Positional arguments and flags can appear in any order (e.g. `prompter "prompt text" -p openai -s concise`). Flag parsing logic in `cli_flow.go` uses `interspersedFlagArgs`.
+3. **Output Validation Protocol**: When catalog prompts declare validation frontmatter, `prompter run` enforces length ratios, sentence bounds, and optional LLM semantic evaluation. Streaming is strictly disallowed for validated prompts.

@@ -1,0 +1,34 @@
+{
+  "subjects": [
+    {"subject": "portrait", "category": "portrait"},
+    {"subject": "landscape", "category": "landscape"},
+    {"subject": "architecture", "category": "architecture"},
+    {"subject": "character", "category": "character"},
+    {"subject": "vehicle", "category": "vehicle"}
+  ],
+  "modifiers": [
+    {"text": "highly detailed", "category": "quality", "slot_position": 2, "weight": 0.95},
+    {"text": "sharp focus", "category": "quality", "slot_position": 2, "weight": 0.9},
+    {"text": "clean composition", "category": "quality", "slot_position": 2, "weight": 0.82},
+    {"text": "cinematic lighting", "category": "lighting", "slot_position": 3, "weight": 0.9},
+    {"text": "soft rim light", "category": "lighting", "slot_position": 3, "weight": 0.72},
+    {"text": "dramatic shadows", "category": "lighting", "slot_position": 3, "weight": 0.68},
+    {"text": "editorial realism", "category": "style", "slot_position": 4, "weight": 0.86},
+    {"text": "concept art", "category": "style", "slot_position": 4, "weight": 0.78},
+    {"text": "fine art photography", "category": "style", "slot_position": 4, "weight": 0.75, "compatible_categories": ["portrait", "landscape", "architecture"]},
+    {"text": "global illumination", "category": "render", "slot_position": 5, "weight": 0.7},
+    {"text": "volumetric atmosphere", "category": "render", "slot_position": 5, "weight": 0.64},
+    {"text": "wide establishing frame", "category": "composition", "slot_position": 6, "weight": 0.66, "compatible_categories": ["landscape", "architecture", "vehicle"]},
+    {"text": "balanced negative space", "category": "composition", "slot_position": 6, "weight": 0.62}
+  ],
+  "artists": [
+    {"name": "Greg Rutkowski", "style_tags": ["fantasy", "concept"], "categories": ["character", "landscape"], "weight": 0.6},
+    {"name": "Annie Leibovitz", "style_tags": ["portrait", "editorial"], "categories": ["portrait", "character"], "weight": 0.7},
+    {"name": "Syd Mead", "style_tags": ["industrial", "futurist"], "categories": ["vehicle", "architecture"], "weight": 0.68}
+  ],
+  "platforms": [
+    {"name": "midjourney", "phrase": "trending on ArtStation", "weight": 0.7},
+    {"name": "stable-diffusion", "phrase": "8k render", "weight": 0.62},
+    {"name": "editorial", "phrase": "magazine cover quality", "weight": 0.55}
+  ]
+}

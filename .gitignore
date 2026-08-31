@@ -1,0 +1,44 @@
+# Binaries
+prompter
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+*.o
+*.a
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# macOS
+.DS_Store
+
+# Config files with secrets (root-level only)
+/config
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Generated artifacts
+logs/
+repomix-output.md
+flow.md
+analysis-results/
+extraction-results.json
+looper-state.json
+
+# Tooling & scratch
+.claude/
+.work/
+docs/prd/
+
