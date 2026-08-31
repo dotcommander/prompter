@@ -225,7 +225,7 @@ func redactURLUserinfo(raw string) string {
 }
 
 // AppVersion is the baseline semver for prompter releases.
-const AppVersion = "0.1.0"
+const AppVersion = "0.1.1"
 
 func getVersionString() string {
 	info, ok := debug.ReadBuildInfo()
