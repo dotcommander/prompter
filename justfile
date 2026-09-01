@@ -42,6 +42,10 @@ qa: fmt-check vet test test-doctests build
 clean:
     rm -f prompter
 
+# Dry-run or publish a resumable source and Homebrew release
+release version *ARGS:
+    go run ./tools/release {{quote(version)}} {{ARGS}}
+
 # Launch interactive configuration wizard
 config:
     go run . configure
