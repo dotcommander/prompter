@@ -6,10 +6,9 @@ Turn rough notes into structured prompts from the command line:
 echo "write a bash backup script" | prompter refine
 ```
 
-Prompter supports prompt refinement, critique, Markdown rewriting, reusable
-catalog prompts, an interactive prompt browser, and deterministic offline image
-prompt construction. Generated text goes to `stdout`; errors, progress, and
-timing go to `stderr`.
+Prompter refines and critiques rough prompts, restructures Markdown, applies
+reusable catalog prompts, and builds image prompts offline. Generated text goes
+to `stdout`; errors, progress, and timing go to `stderr`.
 
 ## Install
 
@@ -19,14 +18,13 @@ brew install dotcommander/tap/prompter
 
 # Go
 go install github.com/dotcommander/prompter@latest
-
-# Installer
-curl -fsSL https://raw.githubusercontent.com/dotcommander/prompter/main/install.sh | sh
 ```
 
 Gemini works with Google Application Default Credentials. Other remote
 providers use their standard API-key environment variables, such as
-`OPENAI_API_KEY`, `GROQ_API_KEY`, or `GEMINI_API_KEY`.
+`OPENAI_API_KEY` or `GROQ_API_KEY`; see the [providers guide](docs/providers.md)
+for per-provider details, including how to use `GEMINI_API_KEY` with the AI
+Studio endpoint.
 
 ## Commands
 
@@ -39,6 +37,7 @@ providers use their standard API-key environment variables, such as
 | `prompter browse` | Search the local prompt vault interactively. |
 | `prompter image <subject>` | Build an image-generation prompt offline. |
 | `prompter configure` | Configure Prompter, or print resolved settings non-interactively. |
+| `prompter models refresh` | Cache up to five affordable model choices per provider from Models.dev, OpenRouter, and the local OMLX server. |
 
 Bare `prompter` displays help. Piped input requires an explicit command.
 
@@ -46,10 +45,11 @@ Bare `prompter` displays help. Piped input requires an explicit command.
 prompter refine -s code "design a retry loop"
 prompter critique "summarize this better"
 prompter rewrite --file notes.md --mode clean
-defuddle parse -m "$url" | prompter apply grai-transform > summary.md
+cat spec.md | prompter apply system-architect > architecture.md
 prompter image "desert observatory" --count 3
 prompter browse
 prompter configure
+prompter models refresh
 ```
 
 Use `prompter <command> --help` for command flags. Common LLM overrides include
@@ -62,7 +62,8 @@ Use `prompter <command> --help` for command flags. Common LLM overrides include
 - `image` is deterministic and offline; it builds prompt text but does not
   generate an image.
 - `browse` copies the selected prompt to the clipboard and writes it to
-  `stdout`.
+  `stdout`. On first launch it seeds an empty vault with eight starter prompts,
+  any of which runs via `apply <name-or-alias>`.
 - `apply` strips YAML frontmatter. Prompts may declare output validation;
   validated calls buffer output and reject invalid responses.
 - Streaming can emit partial text before a provider reports truncation. Always

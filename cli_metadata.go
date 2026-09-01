@@ -25,6 +25,7 @@ Commands:
   browse                      Open the interactive prompt browser
   image <subject>             Build an image-generation prompt offline
   configure                   Configure prompter or print resolved settings
+  models refresh              Refresh model choices from Models.dev, OpenRouter, and local OMLX
 
 Global flags:
   -h, --help                 Show this help
@@ -65,6 +66,8 @@ Flags:
 		fmt.Fprint(w, "Usage: prompter browse\n\nOpens the interactive local prompt browser.\n")
 	case commandConfigure:
 		fmt.Fprint(w, "Usage: prompter configure\n\nOpens the configuration wizard on a terminal, or prints resolved non-secret settings when output is redirected.\n")
+	case commandModels:
+		fmt.Fprint(w, "Usage: prompter models refresh\n\nRefreshes cached model choices from Models.dev, OpenRouter, and the local OMLX server.\n")
 	default:
 		printUsageTo(w)
 	}
@@ -99,13 +102,13 @@ func printConfig(w io.Writer, cfg *config.Config) {
 		if keyVar == "" {
 			keyVar = defaultKeyEnvFor(cfg.Provider)
 		}
-		if cfg.Provider == "wormhole" || cfg.Provider == "omlx" {
+		if cfg.Provider == "omlx" {
 			fmt.Fprintf(w, "Auth Key:          $%s (local server / keyless)\n", keyVar)
 		} else if cfg.Provider == "gemini" {
 			if os.Getenv("GEMINI_API_KEY") != "" {
 				fmt.Fprintf(w, "Auth Key:          $GEMINI_API_KEY (detected ✓)\n")
 			} else {
-				fmt.Fprintf(w, "Auth Key:          Google ADC (ready ✓)\n")
+				fmt.Fprintf(w, "Auth Key:          Google ADC (not checked)\n")
 			}
 		} else if val := os.Getenv(keyVar); val != "" {
 			fmt.Fprintf(w, "Auth Key:          $%s (detected ✓)\n", keyVar)
@@ -142,7 +145,6 @@ func printStyles(w io.Writer) {
 		"code":     "technical programming prompts",
 		"concise":  "compact prompts without fluff",
 		"creative": "imaginative and exploratory prompts",
-		"grai":     "general reasoning AI alignment",
 		"spec":     "formal specifications and acceptance criteria",
 	}
 	for _, style := range availableStyles() {
@@ -176,8 +178,8 @@ func printProviders(w io.Writer, cfg *config.Config) {
 		case pCfg.APIKey != "":
 			status = "configured"
 		case name == "gemini":
-			status = "ADC/ready"
-		case name == "omlx" || name == "wormhole":
+			status = "ADC/unchecked"
+		case name == "omlx":
 			status = "local/ready"
 		}
 		displayName := name
@@ -191,15 +193,37 @@ func printProviders(w io.Writer, cfg *config.Config) {
 
 func redactURLUserinfo(raw string) string {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.User == nil {
-		return raw
+	if err != nil {
+		return "[invalid URL redacted]"
 	}
-	parsed.User = url.User("redacted")
+	if parsed.User != nil {
+		parsed.User = url.User("redacted")
+	}
+	query := parsed.Query()
+	for key := range query {
+		if sensitiveURLParameter(key) {
+			query.Set(key, "redacted")
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	if parsed.Fragment != "" {
+		parsed.Fragment = "redacted"
+	}
 	return parsed.String()
 }
 
+func sensitiveURLParameter(key string) bool {
+	normalized := strings.ToLower(strings.NewReplacer("-", "", "_", "").Replace(key))
+	switch normalized {
+	case "apikey", "accesskey", "auth", "authorization", "bearer", "key", "password", "secret", "token", "accesstoken":
+		return true
+	default:
+		return false
+	}
+}
+
 // AppVersion is the baseline semver for prompter releases.
-const AppVersion = "0.2.0"
+const AppVersion = "0.2.1"
 
 func getVersionString() string {
 	info, ok := debug.ReadBuildInfo()

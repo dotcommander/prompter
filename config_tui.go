@@ -22,14 +22,12 @@ func defaultKeyEnvFor(p string) string {
 		return "GROQ_API_KEY"
 	case "cerebras":
 		return "CEREBRAS_API_KEY"
+	case "deepseek":
+		return "DEEPSEEK_API_KEY"
 	case "openrouter":
 		return "OPENROUTER_API_KEY"
-	case "synthetic":
-		return "SYNTHETIC_API_KEY"
 	case "zai":
 		return "ZAI_API_KEY"
-	case "wormhole":
-		return "WORMHOLE_API_KEY"
 	case "omlx":
 		return "OMLX_API_KEY"
 	default:
@@ -54,7 +52,7 @@ func defaultBaseURLFor(p string) string {
 }
 
 func isProviderConfigured(p string, cfg *config.Config) (bool, string) {
-	if p == "wormhole" || p == "omlx" {
+	if p == "omlx" {
 		return true, "local loopback / keyless"
 	}
 
@@ -71,13 +69,16 @@ func isProviderConfigured(p string, cfg *config.Config) (bool, string) {
 		return true, "API key in config"
 	}
 	if p == "gemini" {
-		if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("PROMPTER_GEMINI_API_KEY") != "" {
+		if os.Getenv("GEMINI_API_KEY") != "" {
 			return true, "$GEMINI_API_KEY detected"
 		}
-		if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
-			return true, "Google ADC detected"
+		if os.Getenv("PROMPTER_GEMINI_API_KEY") != "" {
+			return true, "$PROMPTER_GEMINI_API_KEY detected"
 		}
-		return true, "Google ADC ready"
+		if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
+			return false, "$GOOGLE_APPLICATION_CREDENTIALS set; ADC validity not checked"
+		}
+		return false, "ADC availability not checked"
 	}
 	return false, "key not found"
 }
@@ -87,57 +88,45 @@ type modelChoice struct {
 	label string
 }
 
-func popularModelsFor(p string) []modelChoice {
+func popularModelsFor(p string, discovered ...map[string][]modelChoice) []modelChoice {
+	if len(discovered) > 0 && len(discovered[0][p]) > 0 {
+		return discovered[0][p]
+	}
 	switch p {
 	case "gemini":
 		return []modelChoice{
 			{"gemini-3.7-flash", "gemini-3.7-flash (Default / Fast Hybrid Reasoning)"},
-			{"gemini-2.5-pro", "gemini-2.5-pro (Deep Reasoning & Complex Architecture)"},
-			{"gemini-2.5-flash", "gemini-2.5-flash (Ultra-Fast / High Throughput)"},
 		}
 	case "openai":
 		return []modelChoice{
 			{"gpt-5.6-luna", "gpt-5.6-luna (Default Flagship)"},
-			{"gpt-4o", "gpt-4o (High Intelligence & Multimodal)"},
-			{"gpt-4o-mini", "gpt-4o-mini (Lightweight & Fast)"},
-			{"o3-mini", "o3-mini (STEM & Deep Reasoning)"},
 		}
 	case "groq":
 		return []modelChoice{
-			{"qwen/qwen3.6-27b", "qwen/qwen3.6-27b (Default / Ultra-Fast)"},
-			{"llama-3.3-70b-versatile", "llama-3.3-70b-versatile (Meta Llama 70B)"},
-			{"deepseek-r1-distill-llama-70b", "deepseek-r1-distill-llama-70b (DeepSeek R1 Reasoning)"},
+			{"qwen/qwen3.8-27b", "qwen/qwen3.8-27b (Default / Latest 27B)"},
+			{"qwen/qwen3.6-27b", "qwen/qwen3.6-27b (Previous 27B)"},
 		}
 	case "cerebras":
 		return []modelChoice{
-			{"zai-glm-4.7", "zai-glm-4.7 (Default / CS-3 Hardware)"},
-			{"llama3.3-70b", "llama3.3-70b (Fast 70B Inference)"},
-			{"llama3.1-8b", "llama3.1-8b (Instant Ultra-Low Latency)"},
+			{"gpt-oss-120b", "gpt-oss-120b (Default)"},
+			{"gemma-4-31b", "gemma-4-31b"},
+		}
+	case "deepseek":
+		return []modelChoice{
+			{"deepseek-v4-pro", "deepseek-v4-pro (Default)"},
+			{"deepseek-v4-flash", "deepseek-v4-flash"},
+			{"deepseek-v4-flash-vision-exp", "deepseek-v4-flash-vision-exp (Experimental Vision)"},
 		}
 	case "openrouter":
 		return []modelChoice{
-			{"@preset/free", "@preset/free (Default / Free Router Tier)"},
-			{"anthropic/claude-3.7-sonnet", "anthropic/claude-3.7-sonnet (Claude 3.7 Sonnet)"},
+			{"openrouter/free", "openrouter/free (Default / Free Router Tier)"},
+			{"anthropic/claude-sonnet-5", "anthropic/claude-sonnet-5 (Latest Sonnet)"},
 			{"meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.3-70b-instruct (Llama 3.3 70B)"},
-			{"google/gemini-2.5-pro", "google/gemini-2.5-pro (Gemini 2.5 Pro)"},
-		}
-	case "synthetic":
-		return []modelChoice{
-			{"hf:zai-org/GLM-4.7", "hf:zai-org/GLM-4.7 (Default GLM 4.7)"},
-			{"deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-V3 (DeepSeek V3 671B MoE)"},
-			{"meta-llama/Llama-3.3-70B-Instruct", "meta-llama/Llama-3.3-70B-Instruct (Llama 3.3 70B)"},
 		}
 	case "zai":
 		return []modelChoice{
 			{"glm-5.3-flash", "glm-5.3-flash (Default / High Speed)"},
-			{"glm-4-plus", "glm-4-plus (Flagship Reasoning)"},
-			{"glm-4-air", "glm-4-air (Balanced High Throughput)"},
-		}
-	case "wormhole":
-		return []modelChoice{
-			{"groq/openai/gpt-oss-120b", "groq/openai/gpt-oss-120b (Default)"},
-			{"groq/meta-llama/llama-3.3-70b-versatile", "groq/meta-llama/llama-3.3-70b-versatile"},
-			{"cerebras/meta-llama/llama-3.3-70b", "cerebras/meta-llama/llama-3.3-70b"},
+			{"glm-5.3", "glm-5.3 (Latest Flagship)"},
 		}
 	case "omlx":
 		return []modelChoice{
@@ -151,24 +140,11 @@ func popularModelsFor(p string) []modelChoice {
 }
 
 // RunConfigForm launches an interactive TUI form to configure prompter settings.
-func RunConfigForm(cfg *config.Config) error {
+func RunConfigForm(cfg *config.Config, discovered ...map[string][]modelChoice) error {
 	selectedProvider := cfg.Provider
 	if selectedProvider == "" {
 		selectedProvider = "gemini"
 	}
-
-	pCfg := cfg.Providers[selectedProvider]
-	keyEnv := pCfg.KeyEnv
-	if keyEnv == "" {
-		keyEnv = defaultKeyEnvFor(selectedProvider)
-	}
-
-	model := pCfg.Model
-	if model == "" {
-		model = defaultModelFor(selectedProvider)
-	}
-
-	baseURL := pCfg.BaseURL
 
 	effort := cfg.Effort
 	if effort == "" {
@@ -186,10 +162,9 @@ func RunConfigForm(cfg *config.Config) error {
 		{"openai", "OpenAI (Responses API)"},
 		{"groq", "Groq (Fast Cloud Inference)"},
 		{"cerebras", "Cerebras (Fast Cloud Inference)"},
+		{"deepseek", "DeepSeek"},
 		{"openrouter", "OpenRouter (Multi-model Router)"},
-		{"synthetic", "Synthetic (GLM-4.7)"},
 		{"zai", "Zai (Zhipu AI)"},
-		{"wormhole", "Wormhole (Local Loopback Proxy)"},
 		{"omlx", "OMLX (Local MLX Server)"},
 	}
 
@@ -205,11 +180,15 @@ func RunConfigForm(cfg *config.Config) error {
 				firstDetected = prov.id
 			}
 		} else {
-			keyVar := cfg.Providers[prov.id].KeyEnv
-			if keyVar == "" {
-				keyVar = defaultKeyEnvFor(prov.id)
+			if detail != "key not found" {
+				label = fmt.Sprintf("%-48s [? %s]", prov.name, detail)
+			} else {
+				keyVar := cfg.Providers[prov.id].KeyEnv
+				if keyVar == "" {
+					keyVar = defaultKeyEnvFor(prov.id)
+				}
+				label = fmt.Sprintf("%-48s [✗ $%s not set]", prov.name, keyVar)
 			}
-			label = fmt.Sprintf("%-48s [✗ $%s not set]", prov.name, keyVar)
 		}
 		providerOptions[i] = huh.NewOption(label, prov.id)
 	}
@@ -249,21 +228,23 @@ func RunConfigForm(cfg *config.Config) error {
 	}
 
 	// Adjust defaults for newly selected provider
-	pCfg = cfg.Providers[selectedProvider]
+	pCfg := cfg.Providers[selectedProvider]
+	var keyEnv string
 	if pCfg.KeyEnv != "" {
 		keyEnv = pCfg.KeyEnv
 	} else {
 		keyEnv = defaultKeyEnvFor(selectedProvider)
 	}
+	var model string
 	if pCfg.Model != "" {
 		model = pCfg.Model
 	} else {
 		model = defaultModelFor(selectedProvider)
 	}
-	baseURL = pCfg.BaseURL
+	baseURL := pCfg.BaseURL
 
 	// Prepare recent model choices
-	popularModels := popularModelsFor(selectedProvider)
+	popularModels := popularModelsFor(selectedProvider, discovered...)
 	modelOptions := make([]huh.Option[string], 0, len(popularModels)+1)
 	isPreset := false
 
@@ -324,13 +305,15 @@ func RunConfigForm(cfg *config.Config) error {
 	}
 
 	keyStatusNote := ""
-	if selectedProvider == "wormhole" || selectedProvider == "omlx" {
+	if selectedProvider == "omlx" {
 		keyStatusNote = "(optional — local server / keyless)"
 	} else if selectedProvider == "gemini" {
-		if os.Getenv("GEMINI_API_KEY") != "" {
-			keyStatusNote = "(✓ $GEMINI_API_KEY detected in shell)"
+		if os.Getenv(currentKeyEnv) != "" {
+			keyStatusNote = fmt.Sprintf("(✓ $%s detected in shell)", currentKeyEnv)
+		} else if os.Getenv("PROMPTER_GEMINI_API_KEY") != "" {
+			keyStatusNote = "(✓ $PROMPTER_GEMINI_API_KEY detected in shell)"
 		} else {
-			keyStatusNote = "(✓ Google ADC active by default; API key optional)"
+			keyStatusNote = "(ADC availability not checked; API key optional)"
 		}
 	} else if os.Getenv(currentKeyEnv) != "" {
 		keyStatusNote = fmt.Sprintf("(✓ $%s is set in your environment)", currentKeyEnv)
@@ -417,13 +400,15 @@ func RunConfigForm(cfg *config.Config) error {
 	fmt.Printf("  Default Model:       %s\n", finalModel)
 	if updatedProvider.KeyEnv != "" {
 		keyStatus := ""
-		if cfg.Provider == "wormhole" || cfg.Provider == "omlx" {
+		if cfg.Provider == "omlx" {
 			keyStatus = "local server / keyless ✓"
 		} else if cfg.Provider == "gemini" {
 			if os.Getenv(updatedProvider.KeyEnv) != "" {
 				keyStatus = "detected in environment ✓"
+			} else if os.Getenv("PROMPTER_GEMINI_API_KEY") != "" {
+				keyStatus = "$PROMPTER_GEMINI_API_KEY detected ✓"
 			} else {
-				keyStatus = "Google ADC ready ✓ (optional key not set)"
+				keyStatus = "ADC availability not checked (optional key not set)"
 			}
 		} else if os.Getenv(updatedProvider.KeyEnv) != "" {
 			keyStatus = "detected in environment ✓"
@@ -440,8 +425,22 @@ func RunConfigForm(cfg *config.Config) error {
 	fmt.Printf("  Config File:         %s\n", configFilePath)
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println("\nReady! Try running:")
-	fmt.Println("  prompter \"explain quantum computing to a 10 year old\"")
-	fmt.Println("  prompter                (to browse and search your prompt vault)")
+	fmt.Println("  prompter refine \"explain quantum computing to a 10 year old\"")
+	fmt.Println("  prompter browse")
 
 	return nil
+}
+
+func confirmEmbeddedModelCatalog(fetchErr error) (bool, error) {
+	useEmbedded := false
+	confirm := huh.NewConfirm().
+		Title("Models.dev catalog unavailable").
+		Description(fmt.Sprintf("%v\nUse prompter's embedded verified model catalog instead?", fetchErr)).
+		Affirmative("Use embedded catalog").
+		Negative("Cancel").
+		Value(&useEmbedded)
+	if err := huh.NewForm(huh.NewGroup(confirm)).Run(); err != nil {
+		return false, fmt.Errorf("model catalog fallback confirmation: %w", err)
+	}
+	return useEmbedded, nil
 }

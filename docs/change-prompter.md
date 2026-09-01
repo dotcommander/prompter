@@ -10,7 +10,10 @@ Purpose: contributor guide for implementation changes and verification.
 ## Main workflow
 
 1. Find the implementation area:
-   - `main.go`: CLI parsing, config loading, providers
+   - `main.go`: CLI parsing, dispatch, input/output boundaries
+   - `internal/config`: configuration loading and environment precedence
+   - `internal/provider`: provider interface, transports, and registry
+   - `model_catalog.go`: Models.dev catalog fetch/cache for `models refresh` and `configure`
    - `prompts.go`: prompt loading and frontmatter parsing
    - `finder.go`: interactive fuzzy finder
 2. Make the smallest change that solves the target behavior.
@@ -20,14 +23,18 @@ Purpose: contributor guide for implementation changes and verification.
 
 ## Verification checklist
 
-Run from repo root:
+Run from repo root (the `justfile` already exports `GOWORK=off`):
 
 ```bash
-go build ./...
-go test ./...
+GOWORK=off go build ./...
+GOWORK=off go test -count=1 ./...
+GOWORK=off go test -count=1 ./doctests/...
+GOWORK=off go vet ./...
+gofmt -l .
 ```
 
-Expect both commands to pass before opening a PR.
+Or run `just qa`. Expect all checks to pass before opening a PR. Documentation
+changes must keep the doctests in `./doctests/` green.
 
 ## Related docs
 

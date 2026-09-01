@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
+	"github.com/charmbracelet/x/term"
 	"github.com/dotcommander/prompter/internal/config"
 	"github.com/dotcommander/prompter/internal/provider"
 )
@@ -45,12 +46,19 @@ func isStdinPiped() bool {
 	return (stat.Mode() & os.ModeCharDevice) == 0
 }
 
-func isStdoutTerminal() bool {
-	stat, err := os.Stdout.Stat()
-	if err != nil {
+type terminalFile interface {
+	Stat() (os.FileInfo, error)
+	Fd() uintptr
+}
+
+// isInteractiveTerminal accepts only a character device confirmed by the
+// platform terminal detector. Stat or detector failure is non-interactive.
+func isInteractiveTerminal(file terminalFile, detector func(uintptr) bool) bool {
+	stat, err := file.Stat()
+	if err != nil || stat.Mode()&os.ModeCharDevice == 0 {
 		return false
 	}
-	return (stat.Mode() & os.ModeCharDevice) != 0
+	return detector(file.Fd())
 }
 
 const maxInputBytes = 1 << 20 // 1 MB
@@ -173,11 +181,13 @@ func parseArgs(args []string) (*flags, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("command required")
 	}
-	if !isCommand(args[0]) {
+	requestedCommand := args[0]
+	command := canonicalCommand(requestedCommand)
+	if !isCommand(command) {
 		return nil, fmt.Errorf("unknown command %q", args[0])
 	}
 
-	f := &flags{command: args[0]}
+	f := &flags{command: command}
 	args = args[1:]
 	fs := flag.NewFlagSet(f.command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -207,10 +217,22 @@ func parseArgs(args []string) (*flags, error) {
 		f.promptName = f.args[0]
 		f.args = f.args[1:]
 	}
+	if f.command == commandModels {
+		if len(f.args) != 1 || f.args[0] != "refresh" {
+			return nil, fmt.Errorf("models requires the refresh action")
+		}
+	}
 	if (f.command == commandBrowse || f.command == commandConfigure) && len(f.args) > 0 {
 		return nil, fmt.Errorf("%s does not accept arguments", f.command)
 	}
 	return f, nil
+}
+
+func canonicalCommand(command string) string {
+	if command == commandConfigAlias {
+		return commandConfigure
+	}
+	return command
 }
 
 func hasHelpFlag(args []string) bool {
@@ -272,7 +294,7 @@ func registerOutputFlags(fs *flag.FlagSet, f *flags) {
 
 func isCommand(value string) bool {
 	switch value {
-	case commandRefine, commandCritique, commandRewrite, commandApply, commandBrowse, commandImage, commandConfigure:
+	case commandRefine, commandCritique, commandRewrite, commandApply, commandBrowse, commandImage, commandConfigure, commandModels:
 		return true
 	default:
 		return false
@@ -377,12 +399,14 @@ func resolveProvider(cfg *config.Config, flagProvider, flagBaseURL string) (prov
 		return nil, fmt.Errorf("unknown provider %q (valid: %s)", providerName, provider.KnownNamesString())
 	}
 
-	// Validate API key for selected provider before any network call.
-	if prov.APIKey() == "" {
-		return nil, fmt.Errorf("%s API key not set", providerName)
-	}
-
 	return prov, nil
+}
+
+func validateProviderCredentials(prov provider.Provider) error {
+	if prov.APIKey() == "" {
+		return fmt.Errorf("%s API key not set", prov.Name())
+	}
+	return nil
 }
 
 // -----------------------------------------------------------------------------
@@ -441,6 +465,9 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 	if f.dryRun {
 		printDryRun(os.Stderr, prov, modelName, f, cfg, input, timeout)
 		return nil
+	}
+	if err := validateProviderCredentials(prov); err != nil {
+		return err
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -524,6 +551,22 @@ func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags
 	fmt.Fprintf(w, "Dry run: no API call made\n")
 	fmt.Fprintf(w, "Provider: %s\n", prov.Name())
 	fmt.Fprintf(w, "Model: %s\n", modelName)
+	providerConfig := cfg.Providers[prov.Name()]
+	baseURL := providerConfig.BaseURL
+	if f.baseURL != "" {
+		baseURL = f.baseURL
+	}
+	if baseURL == "" {
+		baseURL = "default"
+	} else {
+		baseURL = redactURLUserinfo(baseURL)
+	}
+	fmt.Fprintf(w, "Base URL: %s\n", baseURL)
+	fmt.Fprintf(w, "Credential source: %s\n", dryRunCredentialSource(prov.Name(), providerConfig))
+	if prov.Name() == "gemini" {
+		fmt.Fprintf(w, "Project ID: %s\n", providerConfig.ProjectID)
+		fmt.Fprintf(w, "Location: %s\n", providerConfig.Location)
+	}
 	fmt.Fprintf(w, "Command: %s\n", f.command)
 	if f.command == commandRewrite {
 		fmt.Fprintf(w, "Mode: %s\n", f.rewriteMode)
@@ -539,6 +582,8 @@ func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags
 	}
 	fmt.Fprintf(w, "Stream: %t\n", f.stream)
 	fmt.Fprintf(w, "Timeout: %s\n", timeout)
+	fmt.Fprintf(w, "Max output tokens: %d\n", cfg.MaxOutputTokens)
+	fmt.Fprintf(w, "Max retries: %d\n", cfg.MaxRetries)
 	fmt.Fprintf(w, "Effort: %s\n", cfg.Effort)
 	fmt.Fprintf(w, "System prompt bytes: %d\n", len(cfg.SystemPrompt))
 	fmt.Fprintf(w, "Input bytes: %d\n", len(input))
@@ -548,6 +593,19 @@ func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags
 	if f.output != "" {
 		fmt.Fprintf(w, "Output file: %s\n", f.output)
 	}
+}
+
+func dryRunCredentialSource(providerName string, providerConfig config.ProviderConfig) string {
+	if providerName == "gemini" && providerConfig.APIKey == "" {
+		return "google-adc"
+	}
+	if providerConfig.KeyEnv != "" {
+		return providerConfig.KeyEnv
+	}
+	if providerConfig.APIKey != "" {
+		return "config-or-" + defaultKeyEnvFor(providerName)
+	}
+	return defaultKeyEnvFor(providerName)
 }
 
 func runAssemble(f *flags, cfg *config.Config) error {
@@ -627,29 +685,6 @@ func runAssemble(f *flags, cfg *config.Config) error {
 	return nil
 }
 
-func runStats(f *flags, cfg *config.Config) error {
-	lib, err := loadComponentLibrary(cfg.ComponentsFile)
-	if err != nil {
-		return err
-	}
-	stats := componentStats(lib)
-	if f.json {
-		data, err := json.MarshalIndent(stats, "", "  ")
-		if err != nil {
-			return fmt.Errorf("encode stats json: %w", err)
-		}
-		fmt.Println(string(data))
-		return nil
-	}
-	fmt.Println("Prompt Component Statistics")
-	fmt.Println("===========================")
-	fmt.Printf("Subjects:  %d\n", stats["subjects"])
-	fmt.Printf("Modifiers: %d\n", stats["modifiers"])
-	fmt.Printf("Artists:   %d\n", stats["artists"])
-	fmt.Printf("Platforms: %d\n", stats["platforms"])
-	return nil
-}
-
 func parseCSV(value string) []string {
 	if strings.TrimSpace(value) == "" {
 		return nil
@@ -713,18 +748,49 @@ func main() {
 
 	switch f.command {
 	case commandBrowse:
+		if err := validateBrowseTerminal(
+			isInteractiveTerminal(os.Stdin, term.IsTerminal),
+			isInteractiveTerminal(os.Stderr, term.IsTerminal),
+		); err != nil {
+			exitWithError(err)
+		}
 		if err := showFinder(cfg); err != nil {
 			exitWithError(err)
 		}
 		return
 	case commandConfigure:
-		if isStdinPiped() || !isStdoutTerminal() {
+		if !isInteractiveTerminal(os.Stdin, term.IsTerminal) || !isInteractiveTerminal(os.Stdout, term.IsTerminal) {
 			printConfig(os.Stdout, cfg)
 			return
 		}
-		if err := RunConfigForm(cfg); err != nil {
+		service, err := newModelCatalogService()
+		if err != nil {
 			exitWithError(err)
 		}
+		catalog, _, err := service.loadOrFetch(context.Background(), cfg)
+		if err != nil {
+			useEmbedded, confirmErr := confirmEmbeddedModelCatalog(err)
+			if confirmErr != nil {
+				exitWithError(confirmErr)
+			}
+			if !useEmbedded {
+				exitWithError(err)
+			}
+		}
+		if err := RunConfigForm(cfg, catalogModelChoices(catalog)); err != nil {
+			exitWithError(err)
+		}
+		return
+	case commandModels:
+		service, err := newModelCatalogService()
+		if err != nil {
+			exitWithError(err)
+		}
+		catalog, err := service.refresh(context.Background(), cfg)
+		if err != nil {
+			exitWithError(err)
+		}
+		printModelCatalog(os.Stdout, catalog)
 		return
 	}
 
@@ -755,6 +821,13 @@ func main() {
 		}
 		exitWithError(err)
 	}
+}
+
+func validateBrowseTerminal(stdinTerminal, stderrTerminal bool) error {
+	if !stdinTerminal || !stderrTerminal {
+		return fmt.Errorf("browse requires interactive stdin and stderr terminals")
+	}
+	return nil
 }
 
 // ensurePromptVault ensures the prompt directory exists, auto-seeding starter prompts if empty.
@@ -790,7 +863,7 @@ func ensurePromptVault(cfg *config.Config) ([]PromptEntry, []string, error) {
 	if len(entries) == 0 && primaryDir != "" {
 		// Auto-seed starter prompts on first interactive finder launch
 		var initOut, initErr bytes.Buffer
-		if initErrVal := runInit(&initOut, &initErr, cfg, primaryDir, false); initErrVal == nil {
+		if initErrVal := runInit(&initOut, &initErr, cfg, primaryDir); initErrVal == nil {
 			fmt.Fprintf(os.Stderr, "Seeded starter prompts in %s\n", primaryDir)
 			entries, _ = ScanPromptsDir(primaryDir)
 		}

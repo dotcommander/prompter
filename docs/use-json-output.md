@@ -36,6 +36,29 @@ result="$(prompter refine "write release notes")"
 prompter refine -v "write changelog" 1>enhanced.txt 2>debug.log
 ```
 
+## JSON output (`image`)
+
+Only `prompter image` emits JSON (`--json`). The shape depends on `--count`:
+
+- `--count 1` (default) → a single JSON object
+- `--count N` (N > 1) → a JSON array of objects
+
+```bash
+# Single result (default) is a bare object
+prompter image "desert observatory" --json | jq -r '.full_prompt'
+
+# Multiple results are an array
+prompter image "desert observatory" --count 3 --json | jq -r '.[].full_prompt'
+
+# Normalize either shape before further processing
+prompter image "portrait of a clockmaker" --json |
+  jq -c 'if type == "array" then .[] else . end'
+```
+
+Remote commands (`refine`, `critique`, `rewrite`, `apply`) emit plain text on
+stdout; they have no JSON mode. Use `--dry-run` for resolved-setting diagnostics
+on stderr, but rely on the exit code and stdout/stderr contract above.
+
 ## Verification checklist
 
 - Integration path uses an explicit command such as `prompter refine ...`

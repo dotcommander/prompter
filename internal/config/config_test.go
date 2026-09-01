@@ -28,7 +28,7 @@ func writeTestConfig(t *testing.T, content string) string {
 
 func clearAllProviderEnvVars(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{"GEMINI", "OPENAI", "GROQ", "CEREBRAS", "OPENROUTER", "SYNTHETIC", "ZAI", "WORMHOLE", "OMLX"} {
+	for _, name := range []string{"GEMINI", "OPENAI", "GROQ", "CEREBRAS", "DEEPSEEK", "OPENROUTER", "ZAI", "OMLX"} {
 		t.Setenv(name+"_API_KEY", "")
 		t.Setenv(name+"_MODEL", "")
 		t.Setenv(name+"_BASE_URL", "")
@@ -59,35 +59,33 @@ func TestLoad(t *testing.T) {
 				"provider":"cerebras",
 				"prompts_dirs":["~/one","/tmp/two"],
 				"openai":{"api_key":"openai-key","model":"openai-model","base_url":"openai-url"},
-				"synthetic":{"api_key":"synthetic-key","model":"synthetic-model","base_url":"synthetic-url"},
 				"cerebras":{"api_key":"cerebras-key","model":"cerebras-model","base_url":"cerebras-url"},
+				"deepseek":{"api_key":"deepseek-key","model":"deepseek-model","base_url":"deepseek-url"},
 				"groq":{"api_key":"groq-key","model":"groq-model","base_url":"groq-url"},
 				"openrouter":{"api_key":"openrouter-key","model":"openrouter-model","base_url":"openrouter-url"},
 				"zai":{"api_key":"zai-key","model":"zai-model","base_url":"zai-url"},
-				"wormhole":{"api_key":"wormhole-key","model":"wormhole-model","base_url":"wormhole-url"},
 				"gemini":{"api_key":"gemini-key","model":"gemini-model","base_url":"gemini-url","project_id":"project","location":"location"},
 				"omlx":{"api_key":"omlx-key","model":"omlx-model","base_url":"omlx-url"}
 			}`,
 			wantProviders: map[string]ProviderConfig{
 				"openai":     {APIKey: "openai-key", Model: "openai-model", BaseURL: "openai-url"},
-				"synthetic":  {APIKey: "synthetic-key", Model: "synthetic-model", BaseURL: "synthetic-url"},
 				"cerebras":   {APIKey: "cerebras-key", Model: "cerebras-model", BaseURL: "cerebras-url"},
+				"deepseek":   {APIKey: "deepseek-key", Model: "deepseek-model", BaseURL: "deepseek-url"},
 				"groq":       {APIKey: "groq-key", Model: "groq-model", BaseURL: "groq-url"},
 				"openrouter": {APIKey: "openrouter-key", Model: "openrouter-model", BaseURL: "openrouter-url"},
 				"zai":        {APIKey: "zai-key", Model: "zai-model", BaseURL: "zai-url"},
-				"wormhole":   {APIKey: "wormhole-key", Model: "wormhole-model", BaseURL: "wormhole-url"},
 				"gemini":     {APIKey: "gemini-key", Model: "gemini-model", BaseURL: "gemini-url", ProjectID: "project", Location: "location"},
 				"omlx":       {APIKey: "omlx-key", Model: "omlx-model", BaseURL: "omlx-url"},
 			},
 		},
 		{
 			name:          "partial config",
-			content:       `{"provider":"openai","openai":{"api_key":"sk-test123","model":"gpt-4"}}`,
-			wantProviders: map[string]ProviderConfig{"openai": {APIKey: "sk-test123", Model: "gpt-4"}},
+			content:       `{"provider":"openai","openai":{"api_key":"sk-test123","model":"gpt-5.6-luna"}}`,
+			wantProviders: map[string]ProviderConfig{"openai": {APIKey: "sk-test123", Model: "gpt-5.6-luna"}},
 			wantDefaults:  true,
 		},
 		{name: "invalid JSON", content: `{invalid json`, wantErr: true},
-		{name: "missing provider", content: `{"openai":{"model":"gpt-4"}}`, wantErr: true},
+		{name: "missing provider", content: `{"openai":{"model":"gpt-5.6-luna"}}`, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -108,8 +106,8 @@ func TestLoad(t *testing.T) {
 					t.Errorf("Providers[%q] = %+v, want %+v", name, got, want)
 				}
 			}
-			if len(cfg.Providers) != 9 {
-				t.Errorf("len(Providers) = %d, want 9", len(cfg.Providers))
+			if len(cfg.Providers) != 8 {
+				t.Errorf("len(Providers) = %d, want 8", len(cfg.Providers))
 			}
 			if tt.wantDefaults {
 				if cfg.Effort != "low" || cfg.MaxOutputTokens != DefaultMaxOutputTokens || cfg.MaxRetries != DefaultMaxRetries {
@@ -147,11 +145,38 @@ func TestLoadMissingFile(t *testing.T) {
 	if cfg.Timeout != DefaultTimeout {
 		t.Errorf("Timeout = %d, want %d", cfg.Timeout, DefaultTimeout)
 	}
-	if len(cfg.Providers) != 9 {
-		t.Errorf("len(Providers) = %d, want 9", len(cfg.Providers))
+	if len(cfg.Providers) != 8 {
+		t.Errorf("len(Providers) = %d, want 8", len(cfg.Providers))
 	}
 	if cfg.Providers["gemini"].Model != "gemini-3.7-flash" {
 		t.Errorf("gemini model = %q, want gemini-3.7-flash", cfg.Providers["gemini"].Model)
+	}
+}
+
+func TestDefaultProviderModels(t *testing.T) {
+	t.Parallel()
+
+	want := map[string]string{
+		"openai":     "gpt-5.6-luna",
+		"cerebras":   "gpt-oss-120b",
+		"deepseek":   "deepseek-v4-pro",
+		"groq":       "qwen/qwen3.8-27b",
+		"openrouter": "openrouter/free",
+		"zai":        "glm-5.3-flash",
+		"gemini":     "gemini-3.7-flash",
+		"omlx":       "Ornith-1.5-35B-A3B-oQ4e-mtp",
+	}
+	defaults := DefaultProviders()
+	if len(defaults) != len(want) {
+		t.Fatalf("len(DefaultProviders()) = %d, want %d", len(defaults), len(want))
+	}
+	for name, wantModel := range want {
+		if got := defaults[name].Model; got != wantModel {
+			t.Errorf("DefaultProviders()[%q].Model = %q, want %q", name, got, wantModel)
+		}
+	}
+	if got := defaults["gemini"].ProjectID; got != "" {
+		t.Errorf("DefaultProviders()[gemini].ProjectID = %q, want explicit configuration", got)
 	}
 }
 
@@ -215,16 +240,14 @@ func TestLoadEnvironmentOverridesLegacyProviderFields(t *testing.T) {
 	writeTestConfig(t, `{
 		"provider":"gemini",
 		"openai":{"api_key":"file-key"},
-		"synthetic":{"api_key":"file-key"},
 		"cerebras":{"api_key":"file-key"},
 		"groq":{"api_key":"file-key"},
 		"openrouter":{"api_key":"file-key"},
 		"zai":{"api_key":"file-key"},
-		"wormhole":{"api_key":"file-key"},
 		"gemini":{"api_key":"file-key","project_id":"file-project"},
 		"omlx":{"api_key":"file-key"}
 	}`)
-	for _, name := range []string{"OPENAI", "SYNTHETIC", "CEREBRAS", "GROQ", "OPENROUTER", "ZAI", "WORMHOLE", "GEMINI", "OMLX"} {
+	for _, name := range []string{"OPENAI", "CEREBRAS", "GROQ", "OPENROUTER", "ZAI", "GEMINI", "OMLX"} {
 		t.Setenv("PROMPTER_"+name+"_API_KEY", strings.ToLower(name)+"-env-key")
 	}
 	t.Setenv("PROMPTER_GEMINI_PROJECT_ID", "env-project")
@@ -233,7 +256,7 @@ func TestLoadEnvironmentOverridesLegacyProviderFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	for _, name := range []string{"openai", "synthetic", "cerebras", "groq", "openrouter", "zai", "wormhole", "gemini", "omlx"} {
+	for _, name := range []string{"openai", "cerebras", "groq", "openrouter", "zai", "gemini", "omlx"} {
 		if got, want := cfg.Providers[name].APIKey, name+"-env-key"; got != want {
 			t.Errorf("%s APIKey = %q, want %q", name, got, want)
 		}
@@ -244,7 +267,7 @@ func TestLoadEnvironmentOverridesLegacyProviderFields(t *testing.T) {
 }
 
 func TestLoadMaxOutputTokensExplicit(t *testing.T) {
-	writeTestConfig(t, `{"provider":"wormhole","max_output_tokens":123,"wormhole":{"model":"groq/openai/gpt-oss-120b"}}`)
+	writeTestConfig(t, `{"provider":"omlx","max_output_tokens":123,"omlx":{"model":"local-model"}}`)
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)

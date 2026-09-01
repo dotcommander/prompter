@@ -38,7 +38,7 @@ git-prompt-review() {
 ### Pipelines
 
 ```bash
-defuddle parse -m "https://example.com/spec" | prompter apply grai-transform > summary.md
+defuddle parse -m "https://example.com/spec" | prompter apply system-architect > architecture.md
 { printf '%s\n\n' "Find correctness and security risks in this diff:"; git diff main...HEAD; } |
   prompter critique
 ```

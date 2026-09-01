@@ -19,7 +19,7 @@ func TestRunInit_CreatesStarterPrompts(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := runInit(&stdout, &stderr, cfg, tmpDir, false); err != nil {
+	if err := runInit(&stdout, &stderr, cfg, tmpDir); err != nil {
 		t.Fatalf("runInit: %v", err)
 	}
 
@@ -54,7 +54,7 @@ func TestRunInit_CreatesStarterPrompts(t *testing.T) {
 	}
 }
 
-func TestRunInit_IdempotentAndForce(t *testing.T) {
+func TestRunInit_IdempotentPreservesExistingFiles(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
@@ -64,7 +64,7 @@ func TestRunInit_IdempotentAndForce(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	// First run: creates files
-	if err := runInit(&stdout, &stderr, cfg, tmpDir, false); err != nil {
+	if err := runInit(&stdout, &stderr, cfg, tmpDir); err != nil {
 		t.Fatalf("runInit initial: %v", err)
 	}
 
@@ -75,9 +75,9 @@ func TestRunInit_IdempotentAndForce(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	// Second run without force: should skip existing
+	// Second run should skip existing files.
 	stdout.Reset()
-	if err := runInit(&stdout, &stderr, cfg, tmpDir, false); err != nil {
+	if err := runInit(&stdout, &stderr, cfg, tmpDir); err != nil {
 		t.Fatalf("runInit second: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Skipped existing") {
@@ -85,17 +85,7 @@ func TestRunInit_IdempotentAndForce(t *testing.T) {
 	}
 	gotContent, _ := os.ReadFile(testFile)
 	if string(gotContent) != string(customContent) {
-		t.Errorf("refactor.md was unexpectedly overwritten without --force")
-	}
-
-	// Third run with force: should overwrite
-	stdout.Reset()
-	if err := runInit(&stdout, &stderr, cfg, tmpDir, true); err != nil {
-		t.Fatalf("runInit with force: %v", err)
-	}
-	gotContent, _ = os.ReadFile(testFile)
-	if string(gotContent) == string(customContent) {
-		t.Errorf("refactor.md should have been overwritten with --force")
+		t.Errorf("refactor.md was unexpectedly overwritten")
 	}
 }
 
@@ -106,7 +96,7 @@ func TestParseArgs_InitCommandRemoved(t *testing.T) {
 	}
 }
 
-func TestRunInitForceRefusesSymlinkDestinations(t *testing.T) {
+func TestRunInitSkipsSymlinkDestinations(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
@@ -121,27 +111,48 @@ func TestRunInitForceRefusesSymlinkDestinations(t *testing.T) {
 	}
 	cfg := &config.Config{PromptsDir: tmpDir}
 
-	t.Run("force refuses before any write", func(t *testing.T) {
-		t.Parallel()
-		var stdout, stderr bytes.Buffer
-		err := runInit(&stdout, &stderr, cfg, tmpDir, true)
-		if err == nil || !strings.Contains(err.Error(), "symlink") {
-			t.Fatalf("expected symlink refusal, got: %v", err)
-		}
-		assertVictimIntact(t, victim, original)
-	})
+	var stdout, stderr bytes.Buffer
+	if err := runInit(&stdout, &stderr, cfg, tmpDir); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "refactor.md") {
+		t.Errorf("expected refactor.md reported skipped: %s", stdout.String())
+	}
+	assertVictimIntact(t, victim, original)
+}
 
-	t.Run("without force symlinks are skipped not followed", func(t *testing.T) {
-		t.Parallel()
-		var stdout, stderr bytes.Buffer
-		if err := runInit(&stdout, &stderr, cfg, tmpDir, false); err != nil {
-			t.Fatalf("runInit: %v", err)
+func TestRunInitPreservesDestinationCreatedAtWriteBoundary(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{PromptsDir: tmpDir}
+	target := filepath.Join(tmpDir, "refactor.md")
+	concurrentContent := []byte("created by another process\n")
+	created := false
+	openFile := func(path string, flag int, perm os.FileMode) (*os.File, error) {
+		if path == target && !created {
+			created = true
+			if err := os.WriteFile(path, concurrentContent, 0o644); err != nil {
+				return nil, err
+			}
 		}
-		if !strings.Contains(stdout.String(), "refactor.md") {
-			t.Errorf("expected refactor.md reported skipped: %s", stdout.String())
-		}
-		assertVictimIntact(t, victim, original)
-	})
+		return os.OpenFile(path, flag, perm)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := runInitWithOpen(&stdout, &stderr, cfg, tmpDir, openFile); err != nil {
+		t.Fatalf("runInitWithOpen: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "refactor.md") {
+		t.Fatalf("boundary-created destination was not reported skipped: %s", stdout.String())
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(concurrentContent) {
+		t.Fatalf("boundary-created destination = %q, want %q", got, concurrentContent)
+	}
 }
 
 func assertVictimIntact(t *testing.T, victim string, original []byte) {

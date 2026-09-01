@@ -42,14 +42,10 @@ qa: fmt-check vet test test-doctests build
 clean:
     rm -f prompter
 
-# Seed local starter prompt vault
-init:
-    go run . init
-
 # Launch interactive configuration wizard
 config:
-    go run . config
+    go run . configure
 
-# Run prompter with arbitrary arguments (e.g. just run --dry-run "test")
+# Run prompter with arbitrary arguments (e.g. just run refine --dry-run "test")
 run *ARGS:
     go run . {{ARGS}}

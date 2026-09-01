@@ -12,15 +12,15 @@ import (
 	"net/url"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 const (
-	defaultGeminiProjectID = "grimoire-2025"
-	defaultGeminiLocation  = "global"
-	defaultGeminiModel     = "gemini-3.7-flash"
-	defaultGeminiBaseURL   = "https://aiplatform.googleapis.com/v1"
-	vertexADCScope         = "https://www.googleapis.com/auth/cloud-platform"
+	defaultGeminiLocation = "global"
+	defaultGeminiModel    = "gemini-3.7-flash"
+	defaultGeminiBaseURL  = "https://aiplatform.googleapis.com/v1"
+	vertexADCScope        = "https://www.googleapis.com/auth/cloud-platform"
+	maxGeminiErrorBytes   = 64 << 10
+	maxGeminiBodyBytes    = 16 << 20
 )
 
 type geminiProvider struct {
@@ -29,6 +29,7 @@ type geminiProvider struct {
 	location        string
 	model           string
 	baseURL         string
+	maxRetries      int
 	maxOutputTokens int
 	client          *http.Client
 	tokenResolver   func(context.Context) (string, error)
@@ -75,11 +76,8 @@ type geminiPromptFeedback struct {
 	BlockReasonMessage string `json:"blockReasonMessage"`
 }
 
-// NewGemini creates a Provider backed by Vertex AI generateContent / grimoire.
+// NewGemini creates a Provider backed by Vertex AI or Google AI Studio generateContent.
 func NewGemini(apiKey, projectID, location, model, baseURL string, maxRetries, maxOutputTokens int) Provider {
-	if projectID == "" {
-		projectID = defaultGeminiProjectID
-	}
 	if location == "" {
 		location = defaultGeminiLocation
 	}
@@ -97,8 +95,9 @@ func NewGemini(apiKey, projectID, location, model, baseURL string, maxRetries, m
 		location:        location,
 		model:           model,
 		baseURL:         baseURL,
+		maxRetries:      max(maxRetries, 0),
 		maxOutputTokens: maxOutputTokens,
-		client:          &http.Client{Timeout: 120 * time.Second},
+		client:          &http.Client{},
 		tokenResolver:   googleADCAccessToken,
 	}
 }
@@ -128,7 +127,11 @@ func googleADCAccessToken(ctx context.Context) (string, error) {
 }
 
 func isGenerativeLanguageEndpoint(baseURL string) bool {
-	return strings.Contains(baseURL, "generativelanguage.googleapis.com")
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	return parsed.Scheme == "https" && strings.EqualFold(parsed.Hostname(), "generativelanguage.googleapis.com")
 }
 
 func (p *geminiProvider) getAccessToken(ctx context.Context) (string, error) {
@@ -196,6 +199,9 @@ func (p *geminiProvider) setHeaders(ctx context.Context, httpReq *http.Request) 
 		httpReq.Header.Set("x-goog-api-key", p.apiKey)
 		return nil
 	}
+	if strings.TrimSpace(p.projectID) == "" {
+		return errors.New("project ID required for Vertex AI (set gemini.project_id, PROMPTER_GEMINI_PROJECT_ID, GEMINI_PROJECT_ID, GOOGLE_CLOUD_PROJECT, or GCP_PROJECT)")
+	}
 
 	token, err := p.getAccessToken(ctx)
 	if err != nil {
@@ -206,6 +212,36 @@ func (p *geminiProvider) setHeaders(ctx context.Context, httpReq *http.Request) 
 	return nil
 }
 
+func (p *geminiProvider) do(ctx context.Context, endpoint string, body []byte) (*http.Response, error) {
+	for attempt := 0; ; attempt++ {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("gemini create request: %w", err)
+		}
+		if err := p.setHeaders(ctx, httpReq); err != nil {
+			return nil, fmt.Errorf("gemini: %w", err)
+		}
+
+		resp, err := p.client.Do(httpReq)
+		if err != nil {
+			if attempt < p.maxRetries && ctx.Err() == nil {
+				continue
+			}
+			return nil, fmt.Errorf("gemini: %w", err)
+		}
+		if attempt < p.maxRetries && retryableGeminiStatus(resp.StatusCode) {
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxGeminiErrorBytes))
+			_ = resp.Body.Close()
+			continue
+		}
+		return resp, nil
+	}
+}
+
+func retryableGeminiStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusConflict || status == http.StatusTooManyRequests || status >= 500
+}
+
 func (p *geminiProvider) Call(ctx context.Context, req CallRequest) (string, error) {
 	body, err := p.buildRequestBody(req)
 	if err != nil {
@@ -213,32 +249,25 @@ func (p *geminiProvider) Call(ctx context.Context, req CallRequest) (string, err
 	}
 
 	endpoint := p.buildURL(false)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	resp, err := p.do(ctx, endpoint, body)
 	if err != nil {
-		return "", fmt.Errorf("gemini create request: %w", err)
-	}
-
-	if err := p.setHeaders(ctx, httpReq); err != nil {
-		return "", fmt.Errorf("gemini: %w", err)
-	}
-
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("gemini: %w", err)
+		return "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("gemini read response: %w", err)
-	}
-
 	if resp.StatusCode != http.StatusOK {
+		respBody, truncated, err := readGeminiBody(resp.Body, maxGeminiErrorBytes)
+		if err != nil {
+			return "", fmt.Errorf("gemini read error response: %w", err)
+		}
+		if truncated {
+			respBody = append(respBody, []byte(" [truncated]")...)
+		}
 		return "", fmt.Errorf("gemini: POST %q: %s %s", endpoint, resp.Status, strings.TrimSpace(string(respBody)))
 	}
 
 	var parsed geminiGenerateContentResponse
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
+	if err := decodeGeminiBody(resp.Body, &parsed); err != nil {
 		return "", fmt.Errorf("gemini decode response: %w", err)
 	}
 
@@ -247,6 +276,9 @@ func (p *geminiProvider) Call(ctx context.Context, req CallRequest) (string, err
 			return "", fmt.Errorf("gemini: prompt blocked: %s: %s", parsed.PromptFeedback.BlockReason, parsed.PromptFeedback.BlockReasonMessage)
 		}
 		return "", fmt.Errorf("gemini: response contains no candidates")
+	}
+	if parsed.Candidates[0].FinishReason != "STOP" {
+		return "", newCompletionError(p.Name(), parsed.Candidates[0].FinishReason, p.maxOutputTokens, false)
 	}
 
 	var textParts []string
@@ -270,28 +302,26 @@ func (p *geminiProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 	}
 
 	endpoint := p.buildURL(true)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	resp, err := p.do(ctx, endpoint, body)
 	if err != nil {
-		return fmt.Errorf("gemini create request: %w", err)
-	}
-
-	if err := p.setHeaders(ctx, httpReq); err != nil {
-		return fmt.Errorf("gemini: %w", err)
-	}
-
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("gemini: %w", err)
+		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, truncated, err := readGeminiBody(resp.Body, maxGeminiErrorBytes)
+		if err != nil {
+			return fmt.Errorf("gemini read error response: %w", err)
+		}
+		if truncated {
+			respBody = append(respBody, []byte(" [truncated]")...)
+		}
 		return fmt.Errorf("gemini: POST %q: %s %s", endpoint, resp.Status, strings.TrimSpace(string(respBody)))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
-	var wrote bool
+	var wrote, completed bool
+	var terminalErr error
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
@@ -307,7 +337,8 @@ func (p *geminiProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 			return fmt.Errorf("gemini stream decode event: %w", err)
 		}
 		if len(chunk.Candidates) > 0 {
-			for _, part := range chunk.Candidates[0].Content.Parts {
+			candidate := chunk.Candidates[0]
+			for _, part := range candidate.Content.Parts {
 				if !part.Thought && part.Text != "" {
 					if _, err := io.WriteString(w, part.Text); err != nil {
 						return fmt.Errorf("gemini stream write: %w", err)
@@ -315,15 +346,54 @@ func (p *geminiProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 					wrote = true
 				}
 			}
+			switch candidate.FinishReason {
+			case "":
+			case "STOP":
+				completed = true
+			default:
+				terminalErr = newCompletionError(p.Name(), candidate.FinishReason, p.maxOutputTokens, wrote)
+			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("gemini stream: %w", err)
 	}
+	if terminalErr != nil {
+		return terminalErr
+	}
+	if !completed {
+		return newCompletionError(p.Name(), "missing_terminal_status", p.maxOutputTokens, wrote)
+	}
 	if !wrote {
 		return fmt.Errorf("gemini: stream produced no output")
 	}
 
 	return nil
+}
+
+func readGeminiBody(r io.Reader, limit int64) ([]byte, bool, error) {
+	body, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(body)) > limit {
+		return body[:limit], true, nil
+	}
+	return body, false, nil
+}
+
+func decodeGeminiBody(r io.Reader, dst any) error {
+	return decodeBoundedGeminiJSON(r, dst, maxGeminiBodyBytes)
+}
+
+func decodeBoundedGeminiJSON(r io.Reader, dst any, limit int64) error {
+	body, truncated, err := readGeminiBody(r, limit)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		return fmt.Errorf("response exceeds %d-byte limit", limit)
+	}
+	return json.Unmarshal(body, dst)
 }

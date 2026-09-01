@@ -12,7 +12,7 @@ Prompter scans `prompts_dir` and `prompts_dirs` recursively and indexes `.md` fi
 The same index powers native execution by exact name or alias:
 
 ```bash
-cat source.md | prompter apply grai-transform
+cat source.md | prompter apply system-architect
 ```
 
 The selected prompt body becomes the system prompt. Frontmatter is not sent to the provider. Ambiguous exact matches fail and list their paths.
@@ -33,7 +33,7 @@ validation:
   retries: 1
 ```
 
-The validator strips the named leading control fence before counting source words. It validates word bounds, short-input sentence count, and terminal punctuation. When `semantic_validation` is true, the same provider and model also judge the candidate for changed or invented facts, literals, uncertainty, point of view, and sensory details. A configured retry adds the violations to the system prompt and generates once more. The corrected output is validated again before emission. Semantic validation adds one judge call per candidate, so a successful first draft uses two provider calls and a corrected draft uses four. If the corrected output still fails, `prompter` returns an error and emits no response. `--stream` is rejected for validated prompts because streamed output cannot be recalled.
+The validator strips the named leading control fence before counting source words. It validates word bounds, short-input sentence count, and terminal punctuation. When `semantic_validation` is true, the same provider and model also judge the candidate for changed or invented facts, literals, uncertainty, point of view, and sensory details. A configured retry adds the violations to the system prompt and generates once more. The corrected output is validated again before emission. Semantic validation adds one judge call per candidate, so a successful first draft uses two provider calls and a corrected draft uses four. If the corrected output still fails, `prompter` returns an error and emits no response. `--stream` is rejected for validated prompts because streamed output cannot be recalled. `retries` accepts only `0` or `1`; larger values are rejected when the prompt is loaded.
 
 Required:
 
@@ -83,8 +83,11 @@ Scanner limits & features:
 
 - Max depth: 5 levels
 - Max files: 1000 markdown files
+
+Crossing either scan limit is an explicit error. Stat and read failures are also
+reported instead of silently producing an incomplete prompt catalog.
 - Symlink traversal: resolves and traverses symlinked directories and prompt files (e.g. Obsidian vaults or dotfiles) with cycle detection
-- Empty vault guidance: displays clear setup instructions if no prompt files are found
+- Empty vault: `browse` auto-creates the primary directory and seeds the eight starter prompts on first launch
 
 Invalid frontmatter does not stop scanning. The file still indexes, and a warning is printed to stderr.
 

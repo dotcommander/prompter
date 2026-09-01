@@ -47,8 +47,8 @@ func ScanPromptsDir(dir string) ([]PromptEntry, error) {
 
 	var walk func(currentDir string, depth int) error
 	walk = func(currentDir string, depth int) error {
-		if depth > maxScanDepth || fileCount >= maxScanFiles {
-			return nil
+		if depth > maxScanDepth {
+			return fmt.Errorf("prompt scan depth exceeds limit %d at %s", maxScanDepth, currentDir)
 		}
 
 		realCurrentDir, err := filepath.EvalSymlinks(currentDir)
@@ -56,10 +56,7 @@ func ScanPromptsDir(dir string) ([]PromptEntry, error) {
 			if depth == 0 {
 				return err
 			}
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
+			return fmt.Errorf("resolve prompt directory %s: %w", currentDir, err)
 		}
 		if visitedDirs[realCurrentDir] {
 			return nil // Prevent recursive symlink loops
@@ -72,13 +69,10 @@ func ScanPromptsDir(dir string) ([]PromptEntry, error) {
 		}
 
 		for _, item := range items {
-			if fileCount >= maxScanFiles {
-				break
-			}
 			itemPath := filepath.Join(realCurrentDir, item.Name())
 			info, err := os.Stat(itemPath)
 			if err != nil {
-				continue
+				return fmt.Errorf("stat prompt path %s: %w", itemPath, err)
 			}
 
 			if info.IsDir() {
@@ -91,10 +85,13 @@ func ScanPromptsDir(dir string) ([]PromptEntry, error) {
 			if !strings.HasSuffix(item.Name(), ".md") {
 				continue
 			}
+			if fileCount >= maxScanFiles {
+				return fmt.Errorf("prompt scan exceeds file limit %d at %s", maxScanFiles, itemPath)
+			}
 
 			data, readErr := os.ReadFile(itemPath)
 			if readErr != nil {
-				continue
+				return fmt.Errorf("read prompt file %s: %w", itemPath, readErr)
 			}
 
 			fm, body, fmErr := parseFrontmatter(data)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 )
 
@@ -155,15 +156,24 @@ func assemblePrompt(lib *ComponentLibrary, query string, profile AssemblyProfile
 	result := &AssembledPrompt{Subject: subject, Profile: profile.Name}
 	if len(categories) > 0 {
 		profile.Selections = make([]ModifierSelection, 0, len(categories))
+		available := make(map[string]struct{})
+		for _, modifier := range lib.Modifiers {
+			available[modifier.Category] = struct{}{}
+		}
+		seen := make(map[string]struct{}, len(categories))
 		for _, category := range categories {
 			category = strings.TrimSpace(category)
 			if category == "" {
-				continue
+				return nil, fmt.Errorf("categories must not contain empty values")
 			}
+			if _, ok := available[category]; !ok {
+				return nil, fmt.Errorf("unknown category %q (valid: %s)", category, strings.Join(sortedCategoryNames(available), ", "))
+			}
+			if _, ok := seen[category]; ok {
+				return nil, fmt.Errorf("duplicate category %q", category)
+			}
+			seen[category] = struct{}{}
 			profile.Selections = append(profile.Selections, ModifierSelection{Category: category, Count: 1, MinWeight: 0.3})
-		}
-		if len(profile.Selections) == 0 {
-			return nil, fmt.Errorf("no valid categories")
 		}
 		result.Profile = "custom"
 	}
@@ -179,6 +189,15 @@ func assemblePrompt(lib *ComponentLibrary, query string, profile AssemblyProfile
 	}
 	result.FullPrompt = buildAssembledPromptString(result)
 	return result, nil
+}
+
+func sortedCategoryNames(categories map[string]struct{}) []string {
+	names := make([]string, 0, len(categories))
+	for name := range categories {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (lib *ComponentLibrary) matchSubject(query string) *PromptSubject {

@@ -54,10 +54,6 @@ func resolveStyleFromDir(name, userStylesDir string) (string, error) {
 			return string(data), nil
 		}
 	}
-	if name == "grai" {
-		return defaultEnhancePrompt, nil
-	}
-
 	// Fall back to embedded
 	data, err := stylesFS.ReadFile("prompts/styles/" + name + ".md")
 	if err != nil {
@@ -74,7 +70,7 @@ func availableStyles() []string {
 	if err != nil {
 		return []string{"default"}
 	}
-	styles := make([]string, 0, len(entries)+2)
+	styles := make([]string, 0, len(entries)+1)
 	styles = append(styles, "default")
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
@@ -82,7 +78,6 @@ func availableStyles() []string {
 		}
 		styles = append(styles, strings.TrimSuffix(entry.Name(), ".md"))
 	}
-	styles = append(styles, "grai")
 	slices.Sort(styles[1:])
 	return styles
 }
