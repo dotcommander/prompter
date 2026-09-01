@@ -63,5 +63,6 @@ Pick only the relevant constraints:
 - Output only the enhanced prompt
 - Do not include a preamble or explanation
 - Do not wrap the prompt in quotes or code fences
+- If input is already structured as a system prompt, refine its internal directives directly rather than wrapping it in an outer meta-prompt
 - Keep typical results to 10-20 lines
 - The result must be immediately usable as a system prompt

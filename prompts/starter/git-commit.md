@@ -21,5 +21,6 @@ Rules:
 2. **Header**: Concise (< 72 characters), lowercase after prefix, no ending period.
 3. **Body (if necessary)**: Explain why the change was made and what problem it solves, not just restating the diff line by line.
 4. **Breaking Changes**: Mark with ! or BREAKING CHANGE: footer if applicable.
+5. **Single Commit**: Output exactly one commit message for the entire diff.
 
 Output ONLY the commit message directly without surrounding Markdown fences or conversational preamble.

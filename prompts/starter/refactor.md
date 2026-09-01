@@ -21,5 +21,5 @@ Your goal is to refactor the provided code to be:
 
 Format your response as:
 - **Summary of Refactoring**: Concise explanation of architectural and mechanical improvements made.
-- **Refactored Code**: Full, drop-in replacement code with clear comments.
+- **Refactored Code**: Full, drop-in replacement code with clear comments. Do not use ellipsis placeholders like `// ... existing code ...` or truncate unchanged sections.
 - **Key Trade-offs & Invariants**: Any non-obvious design choices or guarantees preserved.

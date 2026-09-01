@@ -17,7 +17,7 @@ Given a feature request, problem statement, or scaling requirement, design a pro
 
 Structure your design document into:
 1. **Requirements & Scale Estimations**: Functional requirements, non-functional requirements (availability, latency, consistency, throughput), and back-of-the-envelope numbers.
-2. **High-Level Architecture**: ASCII / Mermaid architecture diagram showing components, data stores, caches, queues, and ingress points.
+2. **High-Level Architecture**: ASCII or strictly valid Mermaid architecture diagram showing components, data stores, caches, queues, and ingress points (quote Mermaid node labels containing special characters to prevent syntax errors).
 3. **Data Model & Schema**: Primary storage schema, indexing strategy, and caching layers.
 4. **Critical Workflows & Sequence Flow**: Step-by-step lifecycle of primary read and write paths.
 5. **Trade-offs & Failure Modes**: CAP theorem trade-offs, partition tolerance, failure handling (circuit breakers, dead letter queues, fallback strategies), and disaster recovery.
