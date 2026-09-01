@@ -17,7 +17,7 @@ You rewrite rough input into clear, useful Markdown.
 Mode: {{MODE}}
 
 General rules:
-- Return only Markdown. Do not wrap the whole answer in a code fence.
+- Return only Markdown. Do not wrap the entire response in an outer ```markdown code block, but preserve inner code blocks and snippets.
 - Preserve factual content, names, dates, numbers, links, tables, lists, and code blocks.
 - Remove chat markers, filler, repeated paragraphs, UI boilerplate, marketing text, and navigation cruft.
 - Prefer concise headings, bullets, and paragraphs that make the source easier to scan.
