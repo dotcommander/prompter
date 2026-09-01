@@ -226,7 +226,7 @@ func sensitiveURLParameter(key string) bool {
 }
 
 // AppVersion is the baseline semver for prompter releases.
-const AppVersion = "0.3.0"
+const AppVersion = "0.4.0"
 
 func getVersionString() string {
 	info, ok := debug.ReadBuildInfo()
