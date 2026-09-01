@@ -37,9 +37,10 @@ Studio endpoint.
 | `prompter browse` | Search the local prompt vault interactively. |
 | `prompter image <subject>` | Build an image-generation prompt offline. |
 | `prompter configure` | Configure Prompter, or print resolved settings non-interactively. |
-| `prompter models refresh` | Cache up to five affordable model choices per provider from Models.dev, OpenRouter, and the local OMLX server. |
+| `prompter models refresh` | Cache a short list of affordable model choices per provider from Models.dev, OpenRouter, and the local OMLX server. |
 
-Bare `prompter` displays help. Piped input requires an explicit command.
+Bare `prompter` displays help on an interactive terminal. Piped input defaults
+to `prompter refine` when no command is given.
 
 ```bash
 prompter refine -s code "design a retry loop"
@@ -62,8 +63,8 @@ Use `prompter <command> --help` for command flags. Common LLM overrides include
 - `image` is deterministic and offline; it builds prompt text but does not
   generate an image.
 - `browse` copies the selected prompt to the clipboard and writes it to
-  `stdout`. On first launch it seeds an empty vault with eight starter prompts,
-  any of which runs via `apply <name-or-alias>`.
+  `stdout`. On first run it seeds an empty vault with starter prompts, any of
+  which can be used via `apply <name-or-alias>`.
 - `apply` strips YAML frontmatter. Prompts may declare output validation;
   validated calls buffer output and reject invalid responses.
 - Streaming can emit partial text before a provider reports truncation. Always

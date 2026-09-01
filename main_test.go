@@ -85,6 +85,22 @@ func TestParseArgs_NewIOFlags(t *testing.T) {
 	}
 }
 
+func TestPipedStdinDefaultsToRefine(t *testing.T) {
+	t.Parallel()
+
+	args := rootArgs(nil, true)
+	if !reflect.DeepEqual(args, []string{commandRefine}) {
+		t.Fatalf("rootArgs(nil, true) = %v, want [%s]", args, commandRefine)
+	}
+	if args := rootArgs(nil, false); args != nil {
+		t.Fatalf("rootArgs(nil, false) = %v, want nil", args)
+	}
+	explicit := []string{commandCritique}
+	if args := rootArgs(explicit, true); !reflect.DeepEqual(args, explicit) {
+		t.Fatalf("rootArgs(explicit, true) = %v, want %v", args, explicit)
+	}
+}
+
 func TestParseArgs_ImageFlags(t *testing.T) {
 	t.Parallel()
 

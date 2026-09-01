@@ -382,9 +382,9 @@ func RunConfigForm(cfg *config.Config, discovered ...map[string][]modelChoice) e
 	cfg.Effort = effort
 	cfg.DefaultCopy = defaultCopy
 
-	// Save to config file with portable ~ paths
-	if err := config.Save(cfg); err != nil {
-		return fmt.Errorf("save config: %w", err)
+	// Save to config file with portable ~ paths and ensure prompt vault
+	if err := saveConfigAndVault(cfg); err != nil {
+		return err
 	}
 
 	home, _ := os.UserHomeDir()
@@ -443,4 +443,14 @@ func confirmEmbeddedModelCatalog(fetchErr error) (bool, error) {
 		return false, fmt.Errorf("model catalog fallback confirmation: %w", err)
 	}
 	return useEmbedded, nil
+}
+
+func saveConfigAndVault(cfg *config.Config) error {
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	if _, _, err := ensurePromptVault(cfg); err != nil {
+		return fmt.Errorf("ensure prompt vault: %w", err)
+	}
+	return nil
 }

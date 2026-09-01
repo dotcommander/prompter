@@ -55,6 +55,7 @@ prompter configure
 - Default automatic clipboard copying
 
 Settings are saved to `~/.config/prompter/config.json` using portable machine paths.
+If the primary prompt vault is empty, `configure` also auto-seeds the starter prompts.
 
 Re-running `prompter configure` refreshes the configuration file. It persists
 the active provider, key-variable name, model, base URL, effort, and clipboard

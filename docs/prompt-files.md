@@ -87,7 +87,7 @@ Scanner limits & features:
 Crossing either scan limit is an explicit error. Stat and read failures are also
 reported instead of silently producing an incomplete prompt catalog.
 - Symlink traversal: resolves and traverses symlinked directories and prompt files (e.g. Obsidian vaults or dotfiles) with cycle detection
-- Empty vault: `browse` auto-creates the primary directory and seeds the eight starter prompts on first launch
+- Empty vault: `configure` and `browse` auto-create the primary directory and seed the eight starter prompts on first launch
 
 Invalid frontmatter does not stop scanning. The file still indexes, and a warning is printed to stderr.
 

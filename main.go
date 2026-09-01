@@ -707,22 +707,27 @@ func singleOrMany(results []*AssembledPrompt) any {
 	return results
 }
 
+func rootArgs(args []string, stdinPiped bool) []string {
+	if len(args) == 0 && stdinPiped {
+		return []string{commandRefine}
+	}
+	return args
+}
+
 // -----------------------------------------------------------------------------
 // Main
 // -----------------------------------------------------------------------------
 
 func main() {
+	args := rootArgs(os.Args[1:], isStdinPiped())
+
 	// Fast-path root help and version without loading configuration.
-	if len(os.Args) == 1 {
-		if isStdinPiped() {
-			fmt.Fprintln(os.Stderr, "error: command required; use 'prompter refine' for prompt input")
-			os.Exit(2)
-		}
+	if len(args) == 0 {
 		printUsage()
 		return
 	}
-	if len(os.Args) == 2 {
-		switch os.Args[1] {
+	if len(args) == 1 {
+		switch args[0] {
 		case "--version", "-V":
 			printVersion(os.Stdout)
 			return
@@ -732,7 +737,7 @@ func main() {
 		}
 	}
 
-	f, err := parseArgs(os.Args[1:])
+	f, err := parseArgs(args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			os.Exit(0)
@@ -861,7 +866,7 @@ func ensurePromptVault(cfg *config.Config) ([]PromptEntry, []string, error) {
 	}
 
 	if len(entries) == 0 && primaryDir != "" {
-		// Auto-seed starter prompts on first interactive finder launch
+		// Auto-seed starter prompts on first interactive launch or configure
 		var initOut, initErr bytes.Buffer
 		if initErrVal := runInit(&initOut, &initErr, cfg, primaryDir); initErrVal == nil {
 			fmt.Fprintf(os.Stderr, "Seeded starter prompts in %s\n", primaryDir)
