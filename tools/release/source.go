@@ -43,7 +43,7 @@ func (w *releaseWorkflow) inspectSource(ctx context.Context, fetch bool) (string
 		return "", err
 	}
 	if fetch {
-		if err := w.proc.stream(ctx, w.root, nil, "git", "fetch", "--prune", "--tags", "origin"); err != nil {
+		if err := w.proc.stream(ctx, w.root, nil, "git", releaseFetchArgs()...); err != nil {
 			return "", err
 		}
 		counts, err := w.proc.capture(ctx, w.root, nil, "git", "rev-list", "--left-right", "--count", "origin/main...HEAD")
@@ -235,18 +235,14 @@ func (w *releaseWorkflow) sourcePublish(ctx context.Context) error {
 	if remoteHead == w.state.ReleaseCommit && remoteTag == w.state.ReleaseCommit {
 		return nil
 	}
-	if err := w.proc.stream(ctx, w.root, nil, "git", "fetch", "--prune", "--tags", "origin"); err != nil {
-		return err
+	if remoteHead != w.state.SourceRemoteBase && remoteHead != w.state.ReleaseCommit {
+		return fmt.Errorf("origin/main drifted from %s to %s", shortOID(w.state.SourceRemoteBase), shortOID(remoteHead))
 	}
-	currentBase, err := w.proc.capture(ctx, w.root, nil, "git", "rev-parse", "origin/main")
-	if err != nil {
-		return err
-	}
-	if currentBase != w.state.SourceRemoteBase {
-		return fmt.Errorf("origin/main drifted from %s to %s", shortOID(w.state.SourceRemoteBase), shortOID(currentBase))
-	}
-	if remoteTag != "" {
+	if remoteTag != "" && remoteTag != w.state.ReleaseCommit {
 		return fmt.Errorf("remote tag %s appeared during release", w.tag)
+	}
+	if err := w.sourceTag(ctx); err != nil {
+		return err
 	}
 	if err := w.proc.stream(ctx, w.root, nil, "git", "push", "--atomic", "origin", "main", "refs/tags/"+w.tag); err != nil {
 		return err

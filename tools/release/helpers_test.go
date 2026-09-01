@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -66,6 +67,15 @@ func TestParseOptionsRequiresPublishForResume(t *testing.T) {
 	}
 	if !opts.publish || !opts.resume || opts.version != "0.4.0" {
 		t.Fatalf("parseOptions publish resume = %+v", opts)
+	}
+}
+
+func TestReleaseFetchArgsPreserveLocalRefs(t *testing.T) {
+	t.Parallel()
+
+	want := []string{"fetch", "--no-prune", "--no-tags", "origin"}
+	if got := releaseFetchArgs(); !slices.Equal(got, want) {
+		t.Fatalf("releaseFetchArgs() = %q, want %q", got, want)
 	}
 }
 

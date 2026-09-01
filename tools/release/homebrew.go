@@ -38,7 +38,7 @@ func (w *releaseWorkflow) inspectTap(ctx context.Context, fetch bool) (string, e
 		return "", fmt.Errorf("tap origin is %s, want %s", repository, tapRepository)
 	}
 	if fetch {
-		if err := w.proc.stream(ctx, tapRoot, nil, "git", "fetch", "--prune", "origin"); err != nil {
+		if err := w.proc.stream(ctx, tapRoot, nil, "git", releaseFetchArgs()...); err != nil {
 			return "", err
 		}
 		head, err := w.proc.capture(ctx, tapRoot, nil, "git", "rev-parse", "HEAD")
@@ -154,15 +154,11 @@ func (w *releaseWorkflow) tapPublish(ctx context.Context) error {
 	if len(remoteOID) == 2 && remoteOID[0] == w.state.TapCommit {
 		return nil
 	}
-	if err := w.proc.stream(ctx, w.state.TapRoot, nil, "git", "fetch", "--prune", "origin"); err != nil {
-		return err
+	if len(remoteOID) != 2 {
+		return errors.New("tap remote main is missing")
 	}
-	currentBase, err := w.proc.capture(ctx, w.state.TapRoot, nil, "git", "rev-parse", "origin/main")
-	if err != nil {
-		return err
-	}
-	if currentBase != w.state.TapRemoteBase {
-		return fmt.Errorf("tap origin/main drifted from %s to %s", shortOID(w.state.TapRemoteBase), shortOID(currentBase))
+	if remoteOID[0] != w.state.TapRemoteBase {
+		return fmt.Errorf("tap origin/main drifted from %s to %s", shortOID(w.state.TapRemoteBase), shortOID(remoteOID[0]))
 	}
 	if err := w.proc.stream(ctx, w.state.TapRoot, nil, "git", "push", "origin", "main"); err != nil {
 		return err
