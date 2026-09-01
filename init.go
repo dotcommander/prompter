@@ -12,6 +12,8 @@ import (
 
 type openFileFunc func(string, int, os.FileMode) (*os.File, error)
 
+const promptInitMarker = ".prompter-init-incomplete"
+
 func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string) error {
 	return runInitWithOpen(stdout, stderr, cfg, targetDir, os.OpenFile)
 }
@@ -30,6 +32,10 @@ func runInitWithOpen(stdout, stderr io.Writer, cfg *config.Config, targetDir str
 
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return fmt.Errorf("create prompts directory %s: %w", targetDir, err)
+	}
+	markerPath := filepath.Join(targetDir, promptInitMarker)
+	if err := ensurePromptInitMarker(markerPath, openFile); err != nil {
+		return fmt.Errorf("create prompt initialization marker: %w", err)
 	}
 
 	entries, err := starterFS.ReadDir("prompts/starter")
@@ -62,6 +68,10 @@ func runInitWithOpen(stdout, stderr io.Writer, cfg *config.Config, targetDir str
 		}
 	}
 
+	if err := os.Remove(markerPath); err != nil {
+		return fmt.Errorf("remove prompt initialization marker: %w", err)
+	}
+
 	fmt.Fprintf(stdout, "✓ Prompt vault initialized at %s\n", targetDir)
 	if len(written) > 0 {
 		fmt.Fprintln(stdout, "\nInstalled starter prompts:")
@@ -81,6 +91,49 @@ func runInitWithOpen(stdout, stderr io.Writer, cfg *config.Config, targetDir str
 	fmt.Fprintln(stdout, "  prompter browse             (to search your vault)")
 
 	return nil
+}
+
+func ensurePromptInitMarker(path string, openFile openFileFunc) error {
+	present, err := promptInitMarkerPresent(path)
+	if err != nil {
+		return err
+	}
+	if present {
+		return nil
+	}
+
+	marker, err := openFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if os.IsExist(err) {
+		present, inspectErr := promptInitMarkerPresent(path)
+		if inspectErr != nil {
+			return inspectErr
+		}
+		if present {
+			return nil
+		}
+		return fmt.Errorf("marker changed during creation")
+	}
+	if err != nil {
+		return err
+	}
+	if err := marker.Close(); err != nil {
+		return fmt.Errorf("close marker: %w", err)
+	}
+	return nil
+}
+
+func promptInitMarkerPresent(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	switch {
+	case os.IsNotExist(err):
+		return false, nil
+	case err != nil:
+		return false, err
+	case !info.Mode().IsRegular():
+		return false, fmt.Errorf("marker is not a regular file")
+	default:
+		return true, nil
+	}
 }
 
 func writeStarterExclusive(path string, content []byte, openFile openFileFunc) (bool, error) {

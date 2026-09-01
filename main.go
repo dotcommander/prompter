@@ -171,6 +171,7 @@ type flags struct {
 	categories       string
 	seed             string
 	rewriteMode      string
+	promptAction     string
 	command          string
 	promptName       string
 	outputValidation *OutputValidation
@@ -222,6 +223,15 @@ func parseArgs(args []string) (*flags, error) {
 			return nil, fmt.Errorf("models requires the refresh action")
 		}
 	}
+	if f.command == commandPrompts {
+		if len(f.args) != 1 || (f.args[0] != "status" && f.args[0] != "upgrade") {
+			return nil, fmt.Errorf("prompts requires the status or upgrade action")
+		}
+		f.promptAction = f.args[0]
+		if f.dryRun && f.promptAction != "upgrade" {
+			return nil, fmt.Errorf("--dry-run is only valid with prompts upgrade")
+		}
+	}
 	if (f.command == commandBrowse || f.command == commandConfigure) && len(f.args) > 0 {
 		return nil, fmt.Errorf("%s does not accept arguments", f.command)
 	}
@@ -267,6 +277,8 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 		fs.BoolVar(&f.noPlatform, "no-platform", false, "")
 		fs.StringVar(&f.categories, "categories", "", "")
 		fs.StringVar(&f.seed, "seed", "", "")
+	case commandPrompts:
+		fs.BoolVar(&f.dryRun, "dry-run", false, "")
 	}
 }
 
@@ -294,7 +306,7 @@ func registerOutputFlags(fs *flag.FlagSet, f *flags) {
 
 func isCommand(value string) bool {
 	switch value {
-	case commandRefine, commandCritique, commandRewrite, commandApply, commandBrowse, commandImage, commandConfigure, commandModels:
+	case commandRefine, commandCritique, commandRewrite, commandApply, commandBrowse, commandImage, commandConfigure, commandModels, commandPrompts:
 		return true
 	default:
 		return false
@@ -438,7 +450,7 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 		return err
 	}
 	if f.command == commandRewrite {
-		input = preprocessRewriteInput(input)
+		input = preprocessRewriteInputForMode(input, f.rewriteMode)
 		if strings.TrimSpace(input) == "" {
 			return fmt.Errorf("rewrite preprocessing removed all content; refusing to send an empty request")
 		}
@@ -708,8 +720,14 @@ func singleOrMany(results []*AssembledPrompt) any {
 }
 
 func rootArgs(args []string, stdinPiped bool) []string {
-	if len(args) == 0 && stdinPiped {
+	if !stdinPiped {
+		return args
+	}
+	if len(args) == 0 {
 		return []string{commandRefine}
+	}
+	if args[0] != "--help" && args[0] != "-h" && args[0] != "--version" && args[0] != "-V" && strings.HasPrefix(args[0], "-") {
+		return append([]string{commandRefine}, args...)
 	}
 	return args
 }
@@ -797,6 +815,11 @@ func main() {
 		}
 		printModelCatalog(os.Stdout, catalog)
 		return
+	case commandPrompts:
+		if err := runPromptMaintenance(os.Stdout, cfg.PromptsDir, f.promptAction, f.dryRun); err != nil {
+			exitWithError(err)
+		}
+		return
 	}
 
 	if f.command == commandRefine || f.command == commandCritique || f.command == commandApply || f.command == commandRewrite || f.command == commandImage {
@@ -837,6 +860,14 @@ func validateBrowseTerminal(stdinTerminal, stderrTerminal bool) error {
 
 // ensurePromptVault ensures the prompt directory exists, auto-seeding starter prompts if empty.
 func ensurePromptVault(cfg *config.Config) ([]PromptEntry, []string, error) {
+	return ensurePromptVaultWithInit(cfg, false, runInit)
+}
+
+func ensurePromptVaultStrict(cfg *config.Config) ([]PromptEntry, []string, error) {
+	return ensurePromptVaultWithInit(cfg, true, runInit)
+}
+
+func ensurePromptVaultWithInit(cfg *config.Config, strict bool, initFn func(io.Writer, io.Writer, *config.Config, string) error) ([]PromptEntry, []string, error) {
 	dirs, err := promptDirs(cfg)
 	if err != nil {
 		return nil, nil, err
@@ -865,12 +896,24 @@ func ensurePromptVault(cfg *config.Config) ([]PromptEntry, []string, error) {
 		}
 	}
 
-	if len(entries) == 0 && primaryDir != "" {
+	initIncomplete := false
+	if primaryDir != "" {
+		initIncomplete, err = promptInitMarkerPresent(filepath.Join(primaryDir, promptInitMarker))
+		if err != nil {
+			return nil, dirs, fmt.Errorf("inspect prompt initialization marker: %w", err)
+		}
+	}
+	if (len(entries) == 0 || initIncomplete) && primaryDir != "" {
 		// Auto-seed starter prompts on first interactive launch or configure
 		var initOut, initErr bytes.Buffer
-		if initErrVal := runInit(&initOut, &initErr, cfg, primaryDir); initErrVal == nil {
+		if initErrVal := initFn(&initOut, &initErr, cfg, primaryDir); initErrVal == nil {
 			fmt.Fprintf(os.Stderr, "Seeded starter prompts in %s\n", primaryDir)
-			entries, _ = ScanPromptsDir(primaryDir)
+			entries, err = ScanPromptsDir(primaryDir)
+			if err != nil && strict {
+				return nil, dirs, fmt.Errorf("scan seeded prompt vault: %w", err)
+			}
+		} else if strict {
+			return nil, dirs, fmt.Errorf("seed prompt vault: %w", initErrVal)
 		}
 	}
 

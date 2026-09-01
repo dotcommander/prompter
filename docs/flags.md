@@ -30,6 +30,12 @@ Only `-h`/`--help` and `-V`/`--version` are global. All other flags belong to a 
 Category names must exist in the loaded component library and may appear only once;
 unknown or duplicate names fail instead of producing a partial prompt.
 
+## Prompt maintenance flags
+
+`prompts upgrade` accepts `--dry-run` to preview missing prompt installation and
+versioned replacement candidates without writing them. `prompts status` does not
+accept `--dry-run` because status is already read-only.
+
 ## Usage examples
 
 ```bash
@@ -69,6 +75,9 @@ prompter refine --copy "write a release checklist"
 prompter image "desert observatory"
 prompter image "portrait of a clockmaker" --profile minimal
 prompter image "futurist tram" --categories quality,composition --json
+
+# Preview starter prompt maintenance
+prompter prompts upgrade --dry-run
 ```
 
 `--output` writes the response to the specified file while simultaneously emitting it to `stdout` (dual-sink). Standard shell redirection (`> prompt.txt`) directs stdout exclusively to the file. `--output` is for non-streamed responses and cannot be combined with `--stream`.

@@ -91,6 +91,15 @@ reported instead of silently producing an incomplete prompt catalog.
 
 Invalid frontmatter does not stop scanning. The file still indexes, and a warning is printed to stderr.
 
+## Upgrading starter prompts
+
+`prompter prompts status` compares the primary vault with the embedded starter
+prompts and known released checksums. `prompter prompts upgrade --dry-run`
+previews changes; omit `--dry-run` to install missing prompts. Existing stock
+and customized prompts are never overwritten. Their current replacement is
+written beside them as `<name>.md.new.<hash>`, allowing explicit review and
+manual adoption while versioned candidates from later releases coexist safely.
+
 ## Component Library
 
 `prompter image` reads reusable image-prompt components from `components_file` in `~/.config/prompter/config.json`.

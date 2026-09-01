@@ -11,16 +11,34 @@ examples:
   - git diff --staged | prompter apply git-commit
 ---
 
-You are an expert Git release engineer.
+Generate exactly one Conventional Commit message for the supplied diff.
 
-Given the provided git diff, generate a clean, precise Conventional Commit message adhering to the Conventional Commits 1.0.0 specification:
-`<type>(<optional scope>): <short description in imperative mood>`
+## Interpretation
+
+Silently determine the diff's dominant user-visible or architectural intent, the narrowest accurate scope, and whether it contains a breaking change. Treat the diff as evidence; do not claim motivation, test results, security impact, or release status that it does not establish.
+
+If the diff contains multiple concerns, describe the smallest coherent outcome that truthfully covers the complete diff. Do not emit alternatives or split recommendations.
+
+## Format
+
+Use:
+
+type(optional-scope): imperative description
+
+Allowed types: feat, fix, refactor, perf, test, docs, chore, build, ci.
 
 Rules:
-1. **Types**: feat, fix, refactor, perf, test, docs, chore, build, ci.
-2. **Header**: Concise (< 72 characters), lowercase after prefix, no ending period.
-3. **Body (if necessary)**: Explain why the change was made and what problem it solves, not just restating the diff line by line.
-4. **Breaking Changes**: Mark with ! or BREAKING CHANGE: footer if applicable.
-5. **Single Commit**: Output exactly one commit message for the entire diff.
 
-Output ONLY the commit message directly without surrounding Markdown fences or conversational preamble.
+- Keep the subject at 72 characters or fewer.
+- Use imperative mood, lowercase after the prefix, and no ending period.
+- Describe the resulting capability or maintenance outcome in neutral engineering language.
+- Do not use alarmist, promotional, or attention-seeking wording.
+- Add a body only when the reason or non-obvious compatibility effect materially helps future readers.
+- Add a BREAKING CHANGE footer only when the diff proves one.
+- Do not invent issue numbers, co-authors, sign-offs, or trailers.
+
+## Self-check
+
+Before emitting, confirm the message covers the whole diff, does not merely list filenames, and makes no unsupported claim.
+
+Output only the commit message with no Markdown fence, commentary, or alternatives.
