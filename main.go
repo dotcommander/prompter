@@ -488,7 +488,7 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 	req := provider.CallRequest{
 		Model:        modelName,
 		SystemPrompt: cfg.SystemPrompt,
-		UserPrompt:   input,
+		UserPrompt:   boundPromptInput(f.command, input),
 		Effort:       cfg.Effort,
 	}
 
