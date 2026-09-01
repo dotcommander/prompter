@@ -40,13 +40,39 @@ var rewriteCruftPatterns = []string{
 }
 
 func preprocessRewriteInput(content string) string {
+	return preprocessRewriteInputForMode(content, "clean")
+}
+
+func preprocessRewriteInputForMode(content, mode string) string {
+	if strings.TrimSpace(mode) == "code" {
+		return strings.Trim(content, "\r\n")
+	}
+
 	lines := strings.Split(content, "\n")
 	out := make([]string, 0, len(lines))
 	prevLine := ""
 	blankCount := 0
+	var fenceMarker byte
+	fenceLength := 0
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
+		if fenceLength > 0 {
+			out = append(out, line)
+			if isRewriteFenceClose(trimmed, fenceMarker, fenceLength) {
+				fenceMarker = 0
+				fenceLength = 0
+				prevLine = ""
+				blankCount = 0
+			}
+			continue
+		}
+		if marker, length, ok := rewriteFenceOpen(trimmed); ok {
+			out = append(out, line)
+			fenceMarker = marker
+			fenceLength = length
+			continue
+		}
 		if isRewriteCruft(trimmed) || isRewriteBinaryLine(trimmed) {
 			continue
 		}
@@ -66,6 +92,29 @@ func preprocessRewriteInput(content string) string {
 	}
 
 	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+func rewriteFenceOpen(line string) (byte, int, bool) {
+	if line == "" || (line[0] != '`' && line[0] != '~') {
+		return 0, 0, false
+	}
+	marker := line[0]
+	length := 0
+	for length < len(line) && line[length] == marker {
+		length++
+	}
+	return marker, length, length >= 3
+}
+
+func isRewriteFenceClose(line string, marker byte, minimumLength int) bool {
+	if line == "" || line[0] != marker {
+		return false
+	}
+	length := 0
+	for length < len(line) && line[length] == marker {
+		length++
+	}
+	return length >= minimumLength && strings.TrimSpace(line[length:]) == ""
 }
 
 // cruftDecoration is trimmed from both ends of a line before whole-line

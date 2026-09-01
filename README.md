@@ -38,6 +38,8 @@ Studio endpoint.
 | `prompter image <subject>` | Build an image-generation prompt offline. |
 | `prompter configure` | Configure Prompter, or print resolved settings non-interactively. |
 | `prompter models refresh` | Cache a short list of affordable model choices per provider from Models.dev, OpenRouter, and the local OMLX server. |
+| `prompter prompts status` | Classify installed starter prompts as current, upgradeable, customized, staged, or missing. |
+| `prompter prompts upgrade` | Install missing prompts and stage versioned replacements without overwriting existing files. |
 
 Bare `prompter` displays help on an interactive terminal. Piped input defaults
 to `prompter refine` when no command is given.
@@ -46,6 +48,7 @@ to `prompter refine` when no command is given.
 prompter refine -s code "design a retry loop"
 prompter critique "summarize this better"
 prompter rewrite --file notes.md --mode clean
+prompter prompts upgrade --dry-run
 cat spec.md | prompter apply system-architect > architecture.md
 prompter image "desert observatory" --count 3
 prompter browse

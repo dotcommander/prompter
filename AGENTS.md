@@ -21,7 +21,7 @@
 
 | Command | Usage | Description | Input Source |
 |---------|-------|-------------|--------------|
-| *(no args)* | `prompter` | Prints usage on an interactive terminal; piped input without an explicit command is rejected. | None |
+| *(no args)* | `prompter` | Prints usage on an interactive terminal; piped input defaults to `refine`, including refine-owned flags. | None / piped stdin |
 | `refine` | `prompter refine <context>` | Improves rough prompt input using the active LLM provider. | Positional args, `--file`, or piped stdin |
 | `critique` | `prompter critique <prompt>` | Analyzes flaws, ambiguities, and missing constraints without rewriting. | Positional args, `--file`, or piped stdin |
 | `rewrite` | `prompter rewrite --file notes.md --mode clean` | Cleans, organizes, and restructures rough Markdown and documentation. | Positional args, `--file`, or piped stdin |
@@ -30,6 +30,7 @@
 | `image` | `prompter image <subject>` | Builds a detailed image-generation prompt from local modular components; it does not generate an image. | Offline / Positional args |
 | `configure` | `prompter configure` | Launches the TUI configuration wizard, or displays resolved non-secret config when non-interactive. | Interactive TTY / redirected output |
 | `models` | `prompter models refresh` | Refreshes the cached Models.dev catalog and prints the top affordable choices per provider. | Network (Models.dev + OpenRouter + local OMLX) |
+| `prompts` | `prompter prompts status\|upgrade` | Inspects starter prompts, installs missing files, and stages versioned replacements without overwriting existing files. | Local prompt vault |
 | Global flags | `prompter --help` / `prompter --version` | Prints root help or version/build information. | None |
 
 ---

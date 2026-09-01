@@ -449,7 +449,7 @@ func saveConfigAndVault(cfg *config.Config) error {
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
-	if _, _, err := ensurePromptVault(cfg); err != nil {
+	if _, _, err := ensurePromptVaultStrict(cfg); err != nil {
 		return fmt.Errorf("ensure prompt vault: %w", err)
 	}
 	return nil

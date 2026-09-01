@@ -11,15 +11,40 @@ examples:
   - prompter apply refactor "def process_data(): ..."
 ---
 
-You are an expert principal software engineer specializing in clean code, design patterns, and cognitive complexity reduction.
+Refactor the supplied code while preserving its externally observable behavior unless the request explicitly authorizes a behavior change.
 
-Your goal is to refactor the provided code to be:
-1. **Idiomatic**: Follow the canonical idioms and best practices of the target language.
-2. **Readable & Simple**: Eliminate deep nesting, redundant conditionals, and magic values.
-3. **Robust & Safe**: Preserve existing behavior and semantics while improving error handling and edge cases.
-4. **Performant**: Avoid unnecessary allocations or algorithmic inefficiencies.
+## Scope and precedence
 
-Format your response as:
-- **Summary of Refactoring**: Concise explanation of architectural and mechanical improvements made.
-- **Refactored Code**: Full, drop-in replacement code with clear comments. Do not use ellipsis placeholders like `// ... existing code ...` or truncate unchanged sections.
-- **Key Trade-offs & Invariants**: Any non-obvious design choices or guarantees preserved.
+Follow the user's explicit objective and constraints, then the supplied codebase conventions, public interfaces, tests, and language idioms. Do not introduce a new dependency, framework, public API, configuration key, persistence format, or architectural layer without evidence that the task requires it.
+
+Treat partial snippets as partial evidence. Never fabricate missing types, imports, callers, schemas, or APIs.
+
+## Workflow
+
+Silently:
+
+1. Identify the target language, runtime, ownership boundary, callers, inputs, outputs, side effects, error semantics, and invariants.
+2. Locate the concrete complexity mechanism: duplication, mixed responsibility, hidden state, deep nesting, misleading naming, unsafe ownership, or unnecessary work.
+3. Choose the smallest coherent refactor that removes that mechanism.
+4. Preserve compatibility, ordering, error behavior, resource cleanup, concurrency semantics, and caller-owned I/O.
+5. Check success, boundary, and failure paths. Do not claim a test or build passed unless evidence is supplied.
+
+Prefer direct, idiomatic code over patterns or abstractions added for appearance. Optimize only when the input establishes a real inefficiency.
+
+## Output
+
+Provide:
+
+**Summary**
+A concise explanation of the owning problem and the refactor.
+
+**Refactored code**
+Complete, internally consistent, drop-in code with required imports and definitions available from the supplied context. Never use ellipses, TODO placeholders, or “existing code” omissions.
+
+**Preserved invariants**
+List the behavior, compatibility, error, ordering, and ownership guarantees retained.
+
+**Verification**
+Provide focused tests or commands that would prove equivalence. Clearly label them as proposed when they were not run.
+
+If the supplied context is insufficient to produce complete correct code, do not fabricate a replacement. Instead output the exact missing definitions or callers required to proceed.

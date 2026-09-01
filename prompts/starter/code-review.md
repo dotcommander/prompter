@@ -11,16 +11,55 @@ examples:
   - git diff main...HEAD | prompter apply code-review
 ---
 
-You are a senior staff engineer and security auditor conducting a rigorous, actionable code review.
+Review the provided code or diff for material defects. Produce a findings-only review that lets a maintainer decide what must change before merge.
 
-Analyze the provided code or git diff against the following dimensions:
-1. **Correctness & Bugs**: Concurrency bugs, race conditions, nil pointers, off-by-one errors, and unhandled edge cases.
-2. **Security & Vulnerabilities**: Injection attacks, unsafe memory/buffer handling, credential leaks, and missing authorization or boundary validation.
-3. **Performance & Resources**: N+1 queries, memory leaks, unclosed file descriptors/sockets, and unnecessary memory allocations.
-4. **Maintainability & API Design**: Breaking API changes, leaky abstractions, and missing error context.
+## Scope and precedence
 
-Format your review with clear severity levels (omit empty sections or note "None"):
-- 🚨 **Critical / Blocking**: High-severity bugs, security risks, or data-loss traps that must be resolved before merge.
-- ⚠️ **Warnings / Improvements**: Sub-optimal performance, missing error checks, or subtle edge cases.
-- 💡 **Nitpicks & Suggestions**: Idiomatic improvements, naming clarity, or documentation additions.
-- ✅ **Positive Observations**: Well-architected patterns or clever solutions worth commending.
+Follow, in order:
+
+1. The user's explicit review scope and constraints.
+2. Supplied repository conventions, interfaces, tests, and surrounding context.
+3. The provided code or diff.
+4. General language and engineering conventions.
+
+Review changed behavior and the smallest affected caller, state, configuration, persistence, and test surfaces needed to establish impact. Do not expand into unrelated cleanup.
+
+## Evidence rules
+
+- Ground every finding in concrete code, control flow, state transition, or reproducible behavior.
+- Distinguish confirmed defects from risks and open questions.
+- Do not invent unseen callers, requirements, runtime behavior, test results, or vulnerabilities.
+- Do not report stylistic preferences as defects.
+- Do not praise routine code or pad the review with generic checklist items.
+- If context is insufficient, name the exact missing evidence and limit the claim.
+
+## Review workflow
+
+Silently:
+
+1. Establish the intended behavior, inputs, outputs, invariants, and compatibility boundary.
+2. Trace success, failure, cancellation, retry, and cleanup paths.
+3. Check correctness, security boundaries, concurrency, resource ownership, API compatibility, persistence, and error propagation where applicable.
+4. Check whether tests exercise the changed behavior and its material failure modes.
+5. Remove any finding that lacks a concrete failure scenario or actionable correction.
+
+## Severity
+
+- Critical: exploitable behavior, data loss, broad outage, or an unsafe irreversible transition.
+- High: likely correctness failure, authorization bypass, deadlock, or major compatibility break.
+- Medium: real defect with bounded impact or a material untested failure path.
+- Low: localized maintainability problem with a concrete future failure mechanism.
+
+## Output
+
+Order findings by severity. For each finding provide:
+
+- [Severity] concise title
+- Evidence: exact file, symbol, line, or behavior
+- Impact: concrete failure scenario
+- Correction: smallest viable fix
+- Verification: focused check proving closure
+
+Then include Open questions only when an answer would change the findings.
+
+If no material findings remain, say: No findings. Then state any verification gaps. Do not rewrite the code unless explicitly asked.

@@ -99,6 +99,15 @@ func TestPipedStdinDefaultsToRefine(t *testing.T) {
 	if args := rootArgs(explicit, true); !reflect.DeepEqual(args, explicit) {
 		t.Fatalf("rootArgs(explicit, true) = %v, want %v", args, explicit)
 	}
+	flags := []string{"--provider", "openai", "--style", "concise"}
+	if args := rootArgs(flags, true); !reflect.DeepEqual(args, append([]string{commandRefine}, flags...)) {
+		t.Fatalf("rootArgs(flags, true) = %v, want refine plus %v", args, flags)
+	}
+	for _, metadataFlag := range []string{"--help", "-h", "--version", "-V"} {
+		if args := rootArgs([]string{metadataFlag}, true); !reflect.DeepEqual(args, []string{metadataFlag}) {
+			t.Errorf("rootArgs(%q, true) = %v, want root metadata flag unchanged", metadataFlag, args)
+		}
+	}
 }
 
 func TestParseArgs_ImageFlags(t *testing.T) {
@@ -1566,7 +1575,7 @@ func TestFinderModel_FilteringAndNavigation(t *testing.T) {
 
 func TestPrintCommandUsage(t *testing.T) {
 	t.Parallel()
-	cmds := []string{"refine", "critique", "rewrite", "apply", "browse", "image", "configure", "models"}
+	cmds := []string{"refine", "critique", "rewrite", "apply", "browse", "image", "configure", "models", "prompts"}
 	for _, cmd := range cmds {
 		var out bytes.Buffer
 		printCommandUsageTo(&out, cmd)
@@ -1582,7 +1591,7 @@ func TestPrintCommandUsage(t *testing.T) {
 
 func TestParseArgs_PublicCommands(t *testing.T) {
 	t.Parallel()
-	tests := [][]string{{"refine"}, {"critique"}, {"rewrite"}, {"apply", "refactor"}, {"browse"}, {"image"}, {"configure"}, {"models", "refresh"}}
+	tests := [][]string{{"refine"}, {"critique"}, {"rewrite"}, {"apply", "refactor"}, {"browse"}, {"image"}, {"configure"}, {"models", "refresh"}, {"prompts", "status"}, {"prompts", "upgrade", "--dry-run"}}
 	for _, args := range tests {
 		f, err := parseArgs(args)
 		if err != nil {
@@ -1590,6 +1599,15 @@ func TestParseArgs_PublicCommands(t *testing.T) {
 		}
 		if f.command != args[0] {
 			t.Errorf("parseArgs(%q) command = %q, want %q", args, f.command, args[0])
+		}
+	}
+}
+
+func TestParseArgsPromptsActions(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"prompts"}, {"prompts", "newest"}, {"prompts", "status", "extra"}, {"prompts", "status", "--dry-run"}} {
+		if _, err := parseArgs(args); err == nil {
+			t.Errorf("parseArgs(%q) unexpectedly succeeded", args)
 		}
 	}
 }

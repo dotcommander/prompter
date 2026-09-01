@@ -26,6 +26,7 @@ Commands:
   image <subject>             Build an image-generation prompt offline
   configure                   Configure prompter or print resolved settings
   models refresh              Refresh model choices from Models.dev, OpenRouter, and local OMLX
+  prompts status|upgrade      Inspect or safely upgrade starter prompts
 
 Global flags:
   -h, --help                 Show this help
@@ -68,6 +69,8 @@ Flags:
 		fmt.Fprint(w, "Usage: prompter configure\n\nOpens the configuration wizard on a terminal, or prints resolved non-secret settings when output is redirected.\n")
 	case commandModels:
 		fmt.Fprint(w, "Usage: prompter models refresh\n\nRefreshes cached model choices from Models.dev, OpenRouter, and the local OMLX server.\n")
+	case commandPrompts:
+		fmt.Fprint(w, "Usage: prompter prompts status\n       prompter prompts upgrade [--dry-run]\n\nInspects starter prompts, installs missing files, and stages versioned replacements without overwriting existing files.\n")
 	default:
 		printUsageTo(w)
 	}

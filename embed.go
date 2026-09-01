@@ -24,7 +24,7 @@ var defaultComponentsJSON string
 //go:embed prompts/styles
 var stylesFS embed.FS
 
-//go:embed prompts/starter
+//go:embed prompts/starter prompts/starter-v*.sha256
 var starterFS embed.FS
 
 // resolveStyle returns the system prompt for the given style name.

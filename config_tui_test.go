@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,5 +110,59 @@ func TestSaveConfigAndVault_PreservesExistingPrompts(t *testing.T) {
 	}
 	if string(got) != string(customContent) {
 		t.Errorf("existing prompt was overwritten, got %q, want %q", string(got), string(customContent))
+	}
+}
+
+func TestEnsurePromptVaultStrictPropagatesSeedFailure(t *testing.T) {
+	t.Parallel()
+
+	promptsDir := filepath.Join(t.TempDir(), "prompts")
+	cfg := &config.Config{PromptsDir: promptsDir, PromptsDirs: []string{promptsDir}}
+	wantErr := errors.New("seed failed")
+	initFn := func(io.Writer, io.Writer, *config.Config, string) error {
+		return wantErr
+	}
+
+	_, _, err := ensurePromptVaultWithInit(cfg, true, initFn)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("ensurePromptVaultWithInit error = %v, want wrapped %v", err, wantErr)
+	}
+}
+
+func TestEnsurePromptVaultStrictResumesPartialSeed(t *testing.T) {
+	t.Parallel()
+
+	promptsDir := filepath.Join(t.TempDir(), "prompts")
+	cfg := &config.Config{PromptsDir: promptsDir, PromptsDirs: []string{promptsDir}}
+	wantErr := errors.New("interrupted seed")
+	partialInit := func(io.Writer, io.Writer, *config.Config, string) error {
+		if err := os.MkdirAll(promptsDir, 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(promptsDir, "enhance.md"), []byte("custom partial\n"), 0o644); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(promptsDir, promptInitMarker), nil, 0o600); err != nil {
+			return err
+		}
+		return wantErr
+	}
+	if _, _, err := ensurePromptVaultWithInit(cfg, true, partialInit); !errors.Is(err, wantErr) {
+		t.Fatalf("partial seed error = %v, want wrapped %v", err, wantErr)
+	}
+
+	entries, _, err := ensurePromptVaultWithInit(cfg, true, runInit)
+	if err != nil {
+		t.Fatalf("resume seed: %v", err)
+	}
+	if len(entries) != 8 {
+		t.Fatalf("resumed prompt count = %d, want 8", len(entries))
+	}
+	data, err := os.ReadFile(filepath.Join(promptsDir, "enhance.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "custom partial\n" {
+		t.Fatalf("partial prompt was overwritten: %q", data)
 	}
 }

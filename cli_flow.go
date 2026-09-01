@@ -15,6 +15,7 @@ const (
 	commandCritique    = "critique"
 	commandImage       = "image"
 	commandModels      = "models"
+	commandPrompts     = "prompts"
 	commandRefine      = "refine"
 	commandRewrite     = "rewrite"
 )
@@ -66,7 +67,7 @@ func interspersedFlagArgs(fs *flag.FlagSet, args []string) []string {
 
 func resolveCommandSystemPrompt(f *flags, cfg *config.Config) error {
 	switch {
-	case f.command == commandImage || f.command == commandBrowse || f.command == commandConfigure || f.command == commandModels:
+	case f.command == commandImage || f.command == commandBrowse || f.command == commandConfigure || f.command == commandModels || f.command == commandPrompts:
 		return nil
 	case f.command == commandApply:
 		validation, err := loadCatalogSystemPrompt(cfg, f.promptName)

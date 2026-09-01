@@ -189,6 +189,18 @@ func TestFlagsMarkdownStreamFlag(t *testing.T) {
 	}
 }
 
+func TestFlagsMarkdownPromptMaintenanceDryRun(t *testing.T) {
+	t.Parallel()
+
+	content, err := os.ReadFile("../docs/flags.md")
+	if err != nil {
+		t.Fatalf("failed to read flags.md: %v", err)
+	}
+	if !strings.Contains(string(content), "prompter prompts upgrade --dry-run") {
+		t.Error("flags.md missing prompts upgrade dry-run example")
+	}
+}
+
 // TestFlagsMarkdownConfigurationSection verifies config section exists
 func TestFlagsMarkdownConfigurationSection(t *testing.T) {
 	t.Parallel()

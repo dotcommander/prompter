@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,6 +153,59 @@ func TestRunInitPreservesDestinationCreatedAtWriteBoundary(t *testing.T) {
 	}
 	if string(got) != string(concurrentContent) {
 		t.Fatalf("boundary-created destination = %q, want %q", got, concurrentContent)
+	}
+}
+
+func TestRunInitLeavesMarkerForResumablePartialFailure(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{PromptsDir: tmpDir}
+	failName := "critique.md"
+	openFile := func(path string, flag int, perm os.FileMode) (*os.File, error) {
+		if filepath.Base(path) == failName {
+			return nil, errors.New("injected write failure")
+		}
+		return os.OpenFile(path, flag, perm)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := runInitWithOpen(&stdout, &stderr, cfg, tmpDir, openFile); err == nil {
+		t.Fatal("runInitWithOpen unexpectedly succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, promptInitMarker)); err != nil {
+		t.Fatalf("initialization marker missing after partial failure: %v", err)
+	}
+	if err := runInit(&stdout, &stderr, cfg, tmpDir); err != nil {
+		t.Fatalf("resume runInit: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, promptInitMarker)); !os.IsNotExist(err) {
+		t.Fatalf("initialization marker remains after successful resume: %v", err)
+	}
+}
+
+func TestRunInitRejectsSymlinkMarker(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim")
+	original := []byte("leave this unchanged\n")
+	if err := os.WriteFile(victim, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(tmpDir, promptInitMarker)
+	if err := os.Symlink(victim, markerPath); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	err := runInit(&stdout, &stderr, &config.Config{PromptsDir: tmpDir}, tmpDir)
+	if err == nil || !strings.Contains(err.Error(), "marker is not a regular file") {
+		t.Fatalf("runInit error = %v, want non-regular marker rejection", err)
+	}
+	assertVictimIntact(t, victim, original)
+	if info, err := os.Lstat(markerPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("marker symlink changed: info=%v err=%v", info, err)
 	}
 }
 

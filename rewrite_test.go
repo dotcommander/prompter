@@ -54,3 +54,44 @@ func TestPreprocessRewriteInputPreservesCRLFText(t *testing.T) {
 		t.Fatalf("CRLF text changed: %q", got)
 	}
 }
+
+func TestPreprocessRewriteInputPreservesFencedCode(t *testing.T) {
+	t.Parallel()
+
+	code := "```sh\nlogin\nlogin\n\n\n```"
+	input := "Intro\n" + code + "\nSign in\nEnd"
+	got := preprocessRewriteInputForMode(input, "clean")
+	if !strings.Contains(got, code) {
+		t.Fatalf("fenced code changed:\n%s", got)
+	}
+	if strings.Contains(got, "\nSign in\n") {
+		t.Fatalf("standalone cruft outside fence was preserved:\n%s", got)
+	}
+}
+
+func TestPreprocessRewriteInputPreservesNestedFences(t *testing.T) {
+	t.Parallel()
+
+	code := "````markdown\n```sh\nlogin\nlogin\n```\n````"
+	input := "Intro\n" + code + "\nSign in\nEnd"
+	got := preprocessRewriteInputForMode(input, "clean")
+	if !strings.Contains(got, code) {
+		t.Fatalf("nested fenced code changed:\n%s", got)
+	}
+	if strings.Contains(got, "\nSign in\n") {
+		t.Fatalf("standalone cruft outside nested fence was preserved:\n%s", got)
+	}
+}
+
+func TestPreprocessRewriteInputCodeModeIsNonDestructive(t *testing.T) {
+	t.Parallel()
+
+	input := "login\nlogin\n\n\ncommand --flag\n"
+	want := strings.Trim(input, "\r\n")
+	if got := preprocessRewriteInputForMode(input, "code"); got != want {
+		t.Fatalf("code mode preprocessing changed input:\ngot:  %q\nwant: %q", got, want)
+	}
+	if got := preprocessRewriteInputForMode(input, " code "); got != want {
+		t.Fatalf("padded code mode preprocessing changed input:\ngot:  %q\nwant: %q", got, want)
+	}
+}
