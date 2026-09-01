@@ -27,24 +27,26 @@ Only `-h`/`--help` and `-V`/`--version` are global. All other flags belong to a 
 ## Image command flags
 
 `image` accepts `--profile`, `--count`, `--categories`, `--no-artist`, `--no-platform`, `--json`, `--seed`, `--file`, `--output`, and `--copy`. It does not accept provider or model flags because it runs offline.
+Category names must exist in the loaded component library and may appear only once;
+unknown or duplicate names fail instead of producing a partial prompt.
 
 ## Usage examples
 
 ```bash
 # Run a catalog prompt by exact name or alias with piped input
-defuddle parse -m "$url" | prompter apply grai-transform > readit.md
+defuddle parse -m "$url" | prompter apply system-architect > plan.md
 
 # Use OpenAI
 prompter refine -p openai "explain this code"
 
-# Use local Wormhole
-prompter refine -p wormhole -m groq/openai/gpt-oss-120b "explain this code"
+# Use local OMLX
+prompter refine -p omlx -m Ornith-1.5-35B-A3B-oQ4e-mtp "explain this code"
 
 # Specify model
-prompter refine -m gpt-4o "my prompt"
+prompter refine -m gpt-5.6-luna "my prompt"
 
 # Provider + model
-prompter refine -p openai -m gpt-4o-mini "my prompt"
+prompter refine -p openai -m gpt-5.6-luna "my prompt"
 
 # Override base URL
 prompter refine --base-url https://api.example.com "my prompt"
@@ -52,7 +54,6 @@ prompter refine --base-url https://api.example.com "my prompt"
 # Pick an enhancement style
 prompter refine -s code "write a retry loop"
 prompter refine --style concise "summarize this"
-prompter refine -s grai "extract names"
 prompter refine -s spec "add OAuth login with refresh token rotation"
 
 # Read input from a file
@@ -72,10 +73,10 @@ prompter image "futurist tram" --categories quality,composition --json
 
 `--output` writes the response to the specified file while simultaneously emitting it to `stdout` (dual-sink). Standard shell redirection (`> prompt.txt`) directs stdout exclusively to the file. `--output` is for non-streamed responses and cannot be combined with `--stream`.
 
-Wormhole supports streaming through its OpenAI-compatible endpoint.
+OMLX supports streaming through its OpenAI-compatible endpoint.
 
 ```bash
-# Check resolved provider/model/input without an API call
+# Check resolved provider/model/output budget/input without an API call
 prompter refine --dry-run -s spec -f draft-prompt.txt
 
 # Stream tokens as they are generated
@@ -85,9 +86,12 @@ prompter refine --stream "write a haiku about goroutines"
 prompter refine -v "my prompt"
 ```
 
-If a Chat Completions provider stops because it reached its output-token limit,
-Prompter exits nonzero. A streamed call may already have written partial text;
-discard that output on any nonzero exit.
+Dry-run output includes the resolved maximum output-token budget. It does not make
+a provider request.
+
+If a provider stops without a successful completion terminal state, including
+because it reached its output-token limit, Prompter exits nonzero. A streamed call
+may already have written partial text; discard that output on any nonzero exit.
 
 ## Configuration
 

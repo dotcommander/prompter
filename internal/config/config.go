@@ -58,12 +58,11 @@ type ConfigFile struct {
 	DefaultCopy     bool     `json:"default_copy,omitempty" mapstructure:"default_copy"`
 
 	OpenAI     ProviderConfig `json:"openai" mapstructure:"openai"`
-	Synthetic  ProviderConfig `json:"synthetic" mapstructure:"synthetic"`
 	Cerebras   ProviderConfig `json:"cerebras" mapstructure:"cerebras"`
+	DeepSeek   ProviderConfig `json:"deepseek" mapstructure:"deepseek"`
 	Groq       ProviderConfig `json:"groq" mapstructure:"groq"`
 	OpenRouter ProviderConfig `json:"openrouter" mapstructure:"openrouter"`
 	Zai        ProviderConfig `json:"zai" mapstructure:"zai"`
-	Wormhole   ProviderConfig `json:"wormhole" mapstructure:"wormhole"`
 	Gemini     ProviderConfig `json:"gemini" mapstructure:"gemini"`
 	Omlx       ProviderConfig `json:"omlx" mapstructure:"omlx"`
 }
@@ -74,79 +73,6 @@ const (
 	DefaultMaxOutputTokens = 4096 // tokens
 	DefaultMaxRetries      = 3    // retries
 )
-
-const configTemplate = `{
-  "provider": "gemini",
-  "prompt_file": "~/.config/prompter/prompts/enhance.md",
-  "prompts_dir": "~/.config/prompter/prompts.d",
-  "prompts_dirs": [
-    "~/.config/prompter/prompts.d",
-    "~/.config/roles/prompts"
-  ],
-  "components_file": "~/.config/prompter/components.json",
-  "effort": "low",
-  "timeout": 60,
-  "max_output_tokens": 4096,
-  "max_retries": 3,
-  "default_copy": false,
-
-  "openai": {
-    "api_key": "",
-    "model": "gpt-5.1",
-    "base_url": "https://api.openai.com/v1"
-  },
-
-  "synthetic": {
-    "api_key": "",
-    "model": "hf:zai-org/GLM-4.7",
-    "base_url": "https://api.synthetic.new/v1"
-  },
-
-  "cerebras": {
-    "api_key": "",
-    "model": "zai-glm-4.7",
-    "base_url": "https://api.cerebras.ai/v1"
-  },
-
-  "groq": {
-    "api_key": "",
-    "model": "qwen/qwen3.6-27b",
-    "base_url": "https://api.groq.com/openai/v1"
-  },
-
-  "openrouter": {
-    "api_key": "",
-    "model": "@preset/free",
-    "base_url": "https://openrouter.ai/api/v1"
-  },
-
-  "zai": {
-    "api_key": "",
-    "model": "GLM-4.7",
-    "base_url": "https://api.z.ai/api/coding/paas/v4"
-  },
-
-  "wormhole": {
-    "api_key": "",
-    "model": "groq/openai/gpt-oss-120b",
-    "base_url": "http://127.0.0.1:8080/v1"
-  },
-
-  "gemini": {
-    "api_key": "",
-    "model": "gemini-3.7-flash",
-    "project_id": "grimoire-2025",
-    "location": "global",
-    "base_url": "https://aiplatform.googleapis.com/v1"
-  },
-
-  "omlx": {
-    "api_key": "",
-    "model": "Ornith-1.5-35B-A3B-oQ4e-mtp",
-    "base_url": "http://127.0.0.1:8000/v1"
-  }
-}
-`
 
 func getConfigPath() string {
 	home, err := os.UserHomeDir()
@@ -221,17 +147,6 @@ func unexpandPaths(paths []string) []string {
 	return unexpanded
 }
 
-func createDefaultConfig(path string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
-	}
-	if err := os.WriteFile(path, []byte(configTemplate), 0600); err != nil {
-		return fmt.Errorf("create config file: %w", err)
-	}
-	return nil
-}
-
 func detectDefaultProvider() string {
 	if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("PROMPTER_GEMINI_API_KEY") != "" {
 		return "gemini"
@@ -245,17 +160,14 @@ func detectDefaultProvider() string {
 	if os.Getenv("CEREBRAS_API_KEY") != "" || os.Getenv("PROMPTER_CEREBRAS_API_KEY") != "" {
 		return "cerebras"
 	}
+	if os.Getenv("DEEPSEEK_API_KEY") != "" || os.Getenv("PROMPTER_DEEPSEEK_API_KEY") != "" {
+		return "deepseek"
+	}
 	if os.Getenv("OPENROUTER_API_KEY") != "" || os.Getenv("PROMPTER_OPENROUTER_API_KEY") != "" {
 		return "openrouter"
 	}
-	if os.Getenv("SYNTHETIC_API_KEY") != "" || os.Getenv("PROMPTER_SYNTHETIC_API_KEY") != "" {
-		return "synthetic"
-	}
 	if os.Getenv("ZAI_API_KEY") != "" || os.Getenv("PROMPTER_ZAI_API_KEY") != "" {
 		return "zai"
-	}
-	if os.Getenv("WORMHOLE_API_KEY") != "" || os.Getenv("PROMPTER_WORMHOLE_API_KEY") != "" {
-		return "wormhole"
 	}
 	return "gemini"
 }
@@ -264,38 +176,33 @@ func detectDefaultProvider() string {
 func DefaultProviders() map[string]ProviderConfig {
 	return map[string]ProviderConfig{
 		"openai": {
-			Model:   "gpt-5.1",
+			Model:   "gpt-5.6-luna",
 			BaseURL: "",
 		},
-		"synthetic": {
-			Model:   "hf:zai-org/GLM-4.7",
-			BaseURL: "https://api.synthetic.new/v1",
-		},
 		"cerebras": {
-			Model:   "zai-glm-4.7",
+			Model:   "gpt-oss-120b",
 			BaseURL: "https://api.cerebras.ai/v1",
 		},
+		"deepseek": {
+			Model:   "deepseek-v4-pro",
+			BaseURL: "https://api.deepseek.com",
+		},
 		"groq": {
-			Model:   "qwen/qwen3.6-27b",
+			Model:   "qwen/qwen3.8-27b",
 			BaseURL: "https://api.groq.com/openai/v1",
 		},
 		"openrouter": {
-			Model:   "@preset/free",
+			Model:   "openrouter/free",
 			BaseURL: "https://openrouter.ai/api/v1",
 		},
 		"zai": {
-			Model:   "GLM-4.7",
+			Model:   "glm-5.3-flash",
 			BaseURL: "https://api.z.ai/api/coding/paas/v4",
 		},
-		"wormhole": {
-			Model:   "groq/openai/gpt-oss-120b",
-			BaseURL: "http://127.0.0.1:8080/v1",
-		},
 		"gemini": {
-			Model:     "gemini-3.7-flash",
-			ProjectID: "grimoire-2025",
-			Location:  "global",
-			BaseURL:   "https://aiplatform.googleapis.com/v1",
+			Model:    "gemini-3.7-flash",
+			Location: "global",
+			BaseURL:  "https://aiplatform.googleapis.com/v1",
 		},
 		"omlx": {
 			Model:   "Ornith-1.5-35B-A3B-oQ4e-mtp",
@@ -423,12 +330,11 @@ func Load() (*Config, error) {
 	defaults := DefaultProviders()
 	fileProviders := map[string]ProviderConfig{
 		"openai":     cfgFile.OpenAI,
-		"synthetic":  cfgFile.Synthetic,
 		"cerebras":   cfgFile.Cerebras,
+		"deepseek":   cfgFile.DeepSeek,
 		"groq":       cfgFile.Groq,
 		"openrouter": cfgFile.OpenRouter,
 		"zai":        cfgFile.Zai,
-		"wormhole":   cfgFile.Wormhole,
 		"gemini":     cfgFile.Gemini,
 		"omlx":       cfgFile.Omlx,
 	}
@@ -578,12 +484,11 @@ func Save(cfg *Config) error {
 		MaxRetries:      cfg.MaxRetries,
 		DefaultCopy:     cfg.DefaultCopy,
 		OpenAI:          cleanProvider(cfg.Providers["openai"]),
-		Synthetic:       cleanProvider(cfg.Providers["synthetic"]),
 		Cerebras:        cleanProvider(cfg.Providers["cerebras"]),
+		DeepSeek:        cleanProvider(cfg.Providers["deepseek"]),
 		Groq:            cleanProvider(cfg.Providers["groq"]),
 		OpenRouter:      cleanProvider(cfg.Providers["openrouter"]),
 		Zai:             cleanProvider(cfg.Providers["zai"]),
-		Wormhole:        cleanProvider(cfg.Providers["wormhole"]),
 		Gemini:          cleanProvider(cfg.Providers["gemini"]),
 		Omlx:            cleanProvider(cfg.Providers["omlx"]),
 	}

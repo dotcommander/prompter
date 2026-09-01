@@ -10,7 +10,13 @@ import (
 	"github.com/dotcommander/prompter/internal/config"
 )
 
-func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string, force bool) error {
+type openFileFunc func(string, int, os.FileMode) (*os.File, error)
+
+func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string) error {
+	return runInitWithOpen(stdout, stderr, cfg, targetDir, os.OpenFile)
+}
+
+func runInitWithOpen(stdout, stderr io.Writer, cfg *config.Config, targetDir string, openFile openFileFunc) error {
 	if targetDir == "" {
 		targetDir = cfg.PromptsDir
 	}
@@ -31,20 +37,6 @@ func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string, for
 		return fmt.Errorf("read embedded starter prompts: %w", err)
 	}
 
-	// Pre-scan: refuse to overwrite through symlinks before writing anything.
-	var symlinked []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
-			continue
-		}
-		if info, err := os.Lstat(filepath.Join(targetDir, entry.Name())); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			symlinked = append(symlinked, entry.Name())
-		}
-	}
-	if force && len(symlinked) > 0 {
-		return fmt.Errorf("refusing --force: symlinked prompt files would overwrite files outside the vault: %s", strings.Join(symlinked, ", "))
-	}
-
 	var written []string
 	var skipped []string
 
@@ -53,21 +45,21 @@ func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string, for
 			continue
 		}
 
-		destPath := filepath.Join(targetDir, entry.Name())
-		if _, err := os.Lstat(destPath); err == nil && !force {
-			skipped = append(skipped, entry.Name())
-			continue
-		}
-
 		content, err := starterFS.ReadFile("prompts/starter/" + entry.Name())
 		if err != nil {
 			return fmt.Errorf("read starter prompt %s: %w", entry.Name(), err)
 		}
 
-		if err := os.WriteFile(destPath, content, 0o644); err != nil {
+		destPath := filepath.Join(targetDir, entry.Name())
+		created, err := writeStarterExclusive(destPath, content, openFile)
+		if err != nil {
 			return fmt.Errorf("write starter prompt %s: %w", destPath, err)
 		}
-		written = append(written, entry.Name())
+		if created {
+			written = append(written, entry.Name())
+		} else {
+			skipped = append(skipped, entry.Name())
+		}
 	}
 
 	fmt.Fprintf(stdout, "✓ Prompt vault initialized at %s\n", targetDir)
@@ -78,7 +70,7 @@ func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string, for
 		}
 	}
 	if len(skipped) > 0 {
-		fmt.Fprintln(stdout, "\nSkipped existing prompts (--force overwrites regular files; symlinks are always refused):")
+		fmt.Fprintln(stdout, "\nSkipped existing prompts:")
 		for _, name := range skipped {
 			fmt.Fprintf(stdout, "  • %s\n", name)
 		}
@@ -89,4 +81,34 @@ func runInit(stdout, stderr io.Writer, cfg *config.Config, targetDir string, for
 	fmt.Fprintln(stdout, "  prompter browse             (to search your vault)")
 
 	return nil
+}
+
+func writeStarterExclusive(path string, content []byte, openFile openFileFunc) (bool, error) {
+	file, err := openFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if os.IsExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	removePartial := true
+	defer func() {
+		_ = file.Close()
+		if removePartial {
+			_ = os.Remove(path)
+		}
+	}()
+	written, err := file.Write(content)
+	if err != nil {
+		return false, err
+	}
+	if written != len(content) {
+		return false, io.ErrShortWrite
+	}
+	if err := file.Close(); err != nil {
+		return false, err
+	}
+	removePartial = false
+	return true, nil
 }

@@ -8,13 +8,15 @@ import (
 )
 
 const (
-	commandApply     = "apply"
-	commandBrowse    = "browse"
-	commandConfigure = "configure"
-	commandCritique  = "critique"
-	commandImage     = "image"
-	commandRefine    = "refine"
-	commandRewrite   = "rewrite"
+	commandApply       = "apply"
+	commandBrowse      = "browse"
+	commandConfigAlias = "config"
+	commandConfigure   = "configure"
+	commandCritique    = "critique"
+	commandImage       = "image"
+	commandModels      = "models"
+	commandRefine      = "refine"
+	commandRewrite     = "rewrite"
 )
 
 // interspersedFlagArgs moves recognized flag tokens before positional input so
@@ -64,7 +66,7 @@ func interspersedFlagArgs(fs *flag.FlagSet, args []string) []string {
 
 func resolveCommandSystemPrompt(f *flags, cfg *config.Config) error {
 	switch {
-	case f.command == commandImage || f.command == commandBrowse || f.command == commandConfigure:
+	case f.command == commandImage || f.command == commandBrowse || f.command == commandConfigure || f.command == commandModels:
 		return nil
 	case f.command == commandApply:
 		validation, err := loadCatalogSystemPrompt(cfg, f.promptName)

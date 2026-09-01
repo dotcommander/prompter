@@ -1,0 +1,19 @@
+{
+  "fixtures": [
+    {
+      "id": "underspecified-technical-request",
+      "args": ["refine"],
+      "input": "make the retry logic better"
+    },
+    {
+      "id": "structured-request",
+      "args": ["refine", "--style", "spec"],
+      "input": "Add bounded retries with exponential backoff, preserve context cancellation, and include table-driven tests."
+    },
+    {
+      "id": "materially-missing-information",
+      "args": ["refine"],
+      "input": "migrate the database"
+    }
+  ]
+}

@@ -30,6 +30,53 @@ type Provider interface {
 	StreamCall(ctx context.Context, req CallRequest, w io.Writer) error
 }
 
+// CompletionError reports a provider terminal state that did not complete successfully.
+type CompletionError struct {
+	provider        string
+	reason          string
+	maxOutputTokens int
+	partial         bool
+}
+
+func (e *CompletionError) Error() string {
+	output := "output is incomplete"
+	if e.partial {
+		output = "partial output may already have been emitted"
+	}
+	if isTokenLimitReason(e.reason) {
+		if !e.partial {
+			output = "output is truncated"
+		}
+		if e.maxOutputTokens > 0 {
+			return fmt.Sprintf("%s: generation reached the configured max output token limit (%d); %s; increase max_output_tokens or shorten the requested output", e.provider, e.maxOutputTokens, output)
+		}
+		return fmt.Sprintf("%s: generation reached its output token limit; %s; increase max_output_tokens or shorten the requested output", e.provider, output)
+	}
+	return fmt.Sprintf("%s: generation ended without successful completion (reason=%s); %s", e.provider, e.reason, output)
+}
+
+func newCompletionError(providerName, reason string, maxOutputTokens int, partial bool) error {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "missing_terminal_status"
+	}
+	return &CompletionError{
+		provider:        providerName,
+		reason:          reason,
+		maxOutputTokens: maxOutputTokens,
+		partial:         partial,
+	}
+}
+
+func isTokenLimitReason(reason string) bool {
+	switch strings.ToLower(strings.TrimSpace(reason)) {
+	case "length", "max_tokens", "max_output_tokens":
+		return true
+	default:
+		return false
+	}
+}
+
 // -----------------------------------------------------------------------------
 // OpenAI Provider (Responses API)
 // -----------------------------------------------------------------------------
@@ -61,13 +108,29 @@ func (p *openAIProvider) Model() string  { return p.model }
 func (p *openAIProvider) APIKey() string { return p.apiKey }
 
 func (p *openAIProvider) buildParams(req CallRequest) responses.ResponseNewParams {
-	return responses.ResponseNewParams{
+	params := responses.ResponseNewParams{
 		Model:           shared.ResponsesModel(req.Model),
 		Instructions:    openai.String(req.SystemPrompt),
 		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(req.UserPrompt)},
 		MaxOutputTokens: openai.Int(int64(p.maxOutputTokens)),
-		Reasoning:       shared.ReasoningParam{Effort: mapEffort(req.Effort)},
 	}
+	if supportsOpenAIReasoning(req.Model) {
+		params.Reasoning = shared.ReasoningParam{Effort: mapEffort(req.Effort)}
+	}
+	return params
+}
+
+func supportsOpenAIReasoning(model string) bool {
+	model = strings.ToLower(strings.TrimSpace(model))
+	if model == "gpt-5" || strings.HasPrefix(model, "gpt-5-") || strings.HasPrefix(model, "gpt-5.") {
+		return true
+	}
+	for _, family := range []string{"o1", "o3", "o4"} {
+		if model == family || strings.HasPrefix(model, family+"-") {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *openAIProvider) Call(ctx context.Context, req CallRequest) (string, error) {
@@ -75,7 +138,18 @@ func (p *openAIProvider) Call(ctx context.Context, req CallRequest) (string, err
 	if err != nil {
 		return "", fmt.Errorf("openai: %w", err)
 	}
-	return resp.OutputText(), nil
+	if resp.Status != responses.ResponseStatusCompleted {
+		reason := resp.IncompleteDetails.Reason
+		if reason == "" {
+			reason = string(resp.Status)
+		}
+		return "", newCompletionError(p.Name(), reason, p.maxOutputTokens, false)
+	}
+	output := resp.OutputText()
+	if strings.TrimSpace(output) == "" {
+		return "", fmt.Errorf("openai: response completed without output text")
+	}
+	return output, nil
 }
 
 func (p *openAIProvider) StreamCall(ctx context.Context, req CallRequest, w io.Writer) (err error) {
@@ -87,9 +161,18 @@ func (p *openAIProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 		}
 	}()
 
-	var wrote bool
+	var wrote, completed bool
+	var terminalErr error
 	for stream.Next() {
 		event := stream.Current()
+		switch event.Type {
+		case "response.completed":
+			completed = true
+		case "response.incomplete":
+			terminalErr = newCompletionError(p.Name(), event.Response.IncompleteDetails.Reason, p.maxOutputTokens, wrote)
+		case "response.failed":
+			terminalErr = newCompletionError(p.Name(), "failed", p.maxOutputTokens, wrote)
+		}
 		if event.Type == "response.output_text.delta" && event.Delta.OfString != "" {
 			if _, err := io.WriteString(w, event.Delta.OfString); err != nil {
 				return fmt.Errorf("openai stream write: %w", err)
@@ -99,6 +182,12 @@ func (p *openAIProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 	}
 	if err := stream.Err(); err != nil {
 		return fmt.Errorf("openai stream: %w", err)
+	}
+	if terminalErr != nil {
+		return terminalErr
+	}
+	if !completed {
+		return newCompletionError(p.Name(), "missing_terminal_status", p.maxOutputTokens, wrote)
 	}
 	if !wrote {
 		return fmt.Errorf("openai: stream produced no output")
@@ -121,7 +210,7 @@ func mapEffort(effort string) shared.ReasoningEffort {
 }
 
 // -----------------------------------------------------------------------------
-// Chat Provider (Chat Completions API — Cerebras, Synthetic, Groq, etc.)
+// Chat Provider (Chat Completions API — Cerebras, Groq, etc.)
 // -----------------------------------------------------------------------------
 
 type chatProvider struct {
@@ -172,10 +261,14 @@ func (p *chatProvider) Call(ctx context.Context, req CallRequest) (string, error
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("%s: no response choices", p.name)
 	}
-	if resp.Choices[0].FinishReason == "length" {
-		return "", p.lengthLimitError(false)
+	choice := resp.Choices[0]
+	if choice.FinishReason != "stop" {
+		return "", newCompletionError(p.name, choice.FinishReason, p.maxOutputTokens, false)
 	}
-	return resp.Choices[0].Message.Content, nil
+	if strings.TrimSpace(choice.Message.Content) == "" {
+		return "", fmt.Errorf("%s: response completed without output text", p.name)
+	}
+	return choice.Message.Content, nil
 }
 
 func (p *chatProvider) StreamCall(ctx context.Context, req CallRequest, w io.Writer) (err error) {
@@ -187,12 +280,17 @@ func (p *chatProvider) StreamCall(ctx context.Context, req CallRequest, w io.Wri
 		}
 	}()
 
-	var wrote, truncated bool
+	var wrote, completed bool
+	var terminalErr error
 	for stream.Next() {
 		chunk := stream.Current()
 		for _, choice := range chunk.Choices {
-			if choice.FinishReason == "length" {
-				truncated = true
+			switch choice.FinishReason {
+			case "":
+			case "stop":
+				completed = true
+			default:
+				terminalErr = newCompletionError(p.name, choice.FinishReason, p.maxOutputTokens, wrote)
 			}
 		}
 		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
@@ -205,24 +303,16 @@ func (p *chatProvider) StreamCall(ctx context.Context, req CallRequest, w io.Wri
 	if err := stream.Err(); err != nil {
 		return fmt.Errorf("%s stream: %w", p.name, err)
 	}
-	if truncated {
-		return p.lengthLimitError(true)
+	if terminalErr != nil {
+		return terminalErr
+	}
+	if !completed {
+		return newCompletionError(p.name, "missing_terminal_status", p.maxOutputTokens, wrote)
 	}
 	if !wrote {
 		return fmt.Errorf("%s: stream produced no output", p.name)
 	}
 	return nil
-}
-
-func (p *chatProvider) lengthLimitError(streamed bool) error {
-	output := "output is truncated"
-	if streamed {
-		output = "partial output may already have been emitted"
-	}
-	if p.maxOutputTokens > 0 {
-		return fmt.Errorf("%s: generation reached the configured max output token limit (%d); %s; increase max_output_tokens or shorten the requested output", p.name, p.maxOutputTokens, output)
-	}
-	return fmt.Errorf("%s: generation reached its output token limit; %s; increase max_output_tokens or shorten the requested output", p.name, output)
 }
 
 // -----------------------------------------------------------------------------
@@ -261,12 +351,11 @@ type providerDescriptor struct {
 
 var providerDescriptors = []providerDescriptor{
 	{name: "openai", transport: transportOpenAI},
-	{name: "synthetic", transport: transportChat},
 	{name: "cerebras", transport: transportChat},
+	{name: "deepseek", transport: transportChat},
 	{name: "groq", transport: transportChat},
 	{name: "openrouter", transport: transportChat},
 	{name: "zai", transport: transportChat},
-	{name: "wormhole", transport: transportChat, keyless: true},
 	{name: "gemini", transport: transportGemini},
 	{name: "omlx", transport: transportChat, keyless: true},
 }

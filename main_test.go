@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +28,6 @@ func TestProvider_Name(t *testing.T) {
 		want string
 	}{
 		{"openai", provider.NewOpenAI("key", "model", "", 3, 4096), "openai"},
-		{"synthetic", provider.NewChat("synthetic", "key", "model", "http://test", 3), "synthetic"},
 		{"cerebras", provider.NewChat("cerebras", "key", "model", "http://test", 3), "cerebras"},
 		{"groq", provider.NewChat("groq", "key", "model", "http://test", 3), "groq"},
 		{"openrouter", provider.NewChat("openrouter", "key", "model", "http://test", 3), "openrouter"},
@@ -220,6 +221,21 @@ func TestParseArgs_LiteralInputBoundary(t *testing.T) {
 	}
 }
 
+func TestParseArgs_DryRunBeforeLiteralInputBoundary(t *testing.T) {
+	t.Parallel()
+
+	f, err := parseArgs([]string{"refine", "--dry-run", "--", "--provider-looking-input"})
+	if err != nil {
+		t.Fatalf("parseArgs error: %v", err)
+	}
+	if !f.dryRun {
+		t.Fatal("dryRun = false, want true")
+	}
+	if got := strings.Join(f.args, " "); got != "--provider-looking-input" {
+		t.Fatalf("args = %q, want literal input", got)
+	}
+}
+
 func TestParseArgs_MissingInterspersedFlagValue(t *testing.T) {
 	t.Parallel()
 
@@ -316,7 +332,7 @@ func TestWriteOutput(t *testing.T) {
 func TestPrintDryRun(t *testing.T) {
 	t.Parallel()
 	var out strings.Builder
-	prov := provider.NewChat("synthetic", "key", "model-a", "http://test", 3)
+	prov := provider.NewChat("groq", "key", "model-a", "http://test", 3)
 	f := &flags{
 		command: commandRefine,
 		dryRun:  true,
@@ -325,8 +341,9 @@ func TestPrintDryRun(t *testing.T) {
 		output:  "output.txt",
 	}
 	cfg := &config.Config{
-		Effort:       "low",
-		SystemPrompt: "system prompt",
+		Effort:          "low",
+		MaxOutputTokens: 4096,
+		SystemPrompt:    "system prompt",
 	}
 
 	printDryRun(&out, prov, "model-b", f, cfg, "prompt", 60*time.Second)
@@ -334,9 +351,13 @@ func TestPrintDryRun(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		"Dry run: no API call made",
-		"Provider: synthetic",
+		"Provider: groq",
 		"Model: model-b",
+		"Base URL: default",
+		"Credential source: GROQ_API_KEY",
 		"Style: code",
+		"Max output tokens: 4096",
+		"Max retries: 0",
 		"System prompt bytes: 13",
 		"Input bytes: 6",
 		"Input file: input.txt",
@@ -345,6 +366,19 @@ func TestPrintDryRun(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("dry run output missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestDryRunCredentialSourceDoesNotExposeCredential(t *testing.T) {
+	t.Parallel()
+	if got := dryRunCredentialSource("groq", config.ProviderConfig{APIKey: "secret"}); got != "config-or-GROQ_API_KEY" {
+		t.Fatalf("standard credential source = %q", got)
+	}
+	if got := dryRunCredentialSource("groq", config.ProviderConfig{APIKey: "secret", KeyEnv: "CUSTOM_KEY"}); got != "CUSTOM_KEY" {
+		t.Fatalf("custom credential source = %q", got)
+	}
+	if got := dryRunCredentialSource("gemini", config.ProviderConfig{}); got != "google-adc" {
+		t.Fatalf("Gemini credential source = %q", got)
 	}
 }
 
@@ -483,6 +517,30 @@ func TestAssemblePromptCustomCategories(t *testing.T) {
 	}
 }
 
+func TestAssemblePromptRejectsUnknownAndDuplicateCategories(t *testing.T) {
+	t.Parallel()
+	lib, err := loadComponentLibrary("")
+	if err != nil {
+		t.Fatalf("loadComponentLibrary: %v", err)
+	}
+	profile, err := assemblyProfile("default")
+	if err != nil {
+		t.Fatalf("assemblyProfile: %v", err)
+	}
+
+	for name, categories := range map[string][]string{
+		"unknown":   {"not-a-category"},
+		"duplicate": {"quality", "quality"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := assemblePrompt(lib, "subject", profile, categories, "seed"); err == nil {
+				t.Fatalf("assemblePrompt(%v) expected validation error", categories)
+			}
+		})
+	}
+}
+
 func TestComponentStats(t *testing.T) {
 	t.Parallel()
 
@@ -564,33 +622,21 @@ func TestResolveStyle_Spec(t *testing.T) {
 	}
 }
 
-func TestResolveStyleGraiOverride(t *testing.T) {
+func TestResolveStyleUserOverride(t *testing.T) {
 	t.Parallel()
 
 	stylesDir := t.TempDir()
-	want := "custom grai prompt"
-	if err := os.WriteFile(filepath.Join(stylesDir, "grai.md"), []byte(want), 0600); err != nil {
-		t.Fatalf("write grai override: %v", err)
+	want := "custom style prompt"
+	if err := os.WriteFile(filepath.Join(stylesDir, "custom.md"), []byte(want), 0600); err != nil {
+		t.Fatalf("write custom style override: %v", err)
 	}
 
-	got, err := resolveStyleFromDir("grai", stylesDir)
+	got, err := resolveStyleFromDir("custom", stylesDir)
 	if err != nil {
-		t.Fatalf("resolveStyleFromDir(grai) error: %v", err)
+		t.Fatalf("resolveStyleFromDir(custom) error: %v", err)
 	}
 	if got != want {
-		t.Fatalf("resolveStyleFromDir(grai) = %q, want %q", got, want)
-	}
-}
-
-func TestResolveStyleGraiFallback(t *testing.T) {
-	t.Parallel()
-
-	got, err := resolveStyleFromDir("grai", t.TempDir())
-	if err != nil {
-		t.Fatalf("resolveStyleFromDir(grai) error: %v", err)
-	}
-	if got != defaultEnhancePrompt {
-		t.Fatal("resolveStyleFromDir(grai) did not return the default enhance prompt")
+		t.Fatalf("resolveStyleFromDir(custom) = %q, want %q", got, want)
 	}
 }
 
@@ -613,7 +659,7 @@ func TestAvailableStylesStableOrder(t *testing.T) {
 	t.Parallel()
 
 	got := availableStyles()
-	want := []string{"default", "code", "concise", "creative", "grai", "spec"}
+	want := []string{"default", "code", "concise", "creative", "spec"}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("availableStyles = %v, want %v", got, want)
 	}
@@ -628,12 +674,10 @@ func TestResolveProvider(t *testing.T) {
 	cfg := &config.Config{
 		Providers: map[string]config.ProviderConfig{
 			"openai":     {APIKey: "key"},
-			"synthetic":  {APIKey: "key", BaseURL: "http://test"},
 			"cerebras":   {APIKey: "key", BaseURL: "http://test"},
 			"groq":       {APIKey: "key", BaseURL: "http://test"},
 			"openrouter": {APIKey: "key", BaseURL: "http://test"},
 			"zai":        {APIKey: "key", BaseURL: "http://test"},
-			"wormhole":   {Model: "groq/openai/gpt-oss-120b", BaseURL: "http://127.0.0.1:8080/v1"},
 			"omlx":       {Model: "Ornith-1.5-35B-A3B-oQ4e-mtp", BaseURL: "http://127.0.0.1:8000/v1"},
 		},
 	}
@@ -644,12 +688,10 @@ func TestResolveProvider(t *testing.T) {
 		wantErr      bool
 	}{
 		{"valid openai", "openai", "openai", false},
-		{"valid synthetic", "synthetic", "synthetic", false},
 		{"valid cerebras", "cerebras", "cerebras", false},
 		{"valid groq", "groq", "groq", false},
 		{"valid openrouter", "openrouter", "openrouter", false},
 		{"valid zai", "zai", "zai", false},
-		{"valid wormhole", "wormhole", "wormhole", false},
 		{"valid gemini", "gemini", "gemini", false},
 		{"valid omlx", "omlx", "omlx", false},
 		{"unknown provider", "unknown", "", true},
@@ -681,61 +723,36 @@ func TestResolveProvider(t *testing.T) {
 	}
 }
 
-func TestResolveProviderWormholeAllowsConfiguredMaxOutputTokens(t *testing.T) {
+func TestResolveProviderDefersMissingRemoteAPIKeyValidation(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		Providers: map[string]config.ProviderConfig{
-			"wormhole": {Model: "groq/openai/gpt-oss-120b", BaseURL: "http://127.0.0.1:8080/v1"},
-		},
-		MaxOutputTokens:         123,
-		MaxOutputTokensExplicit: true,
-	}
-
-	prov, err := resolveProvider(cfg, "wormhole", "")
-	if err != nil {
-		t.Fatalf("resolveProvider unexpected error: %v", err)
-	}
-	if prov.Name() != "wormhole" {
-		t.Fatalf("provider = %q, want wormhole", prov.Name())
-	}
-}
-
-func TestResolveProviderRejectsMissingRemoteAPIKey(t *testing.T) {
-	t.Parallel()
-
-	_, err := resolveProvider(&config.Config{
+	prov, err := resolveProvider(&config.Config{
 		Providers: map[string]config.ProviderConfig{
 			"groq": {Model: "model", BaseURL: "http://test"},
 		},
 	}, "groq", "")
-	if err == nil || err.Error() != "groq API key not set" {
-		t.Fatalf("resolveProvider error = %v, want missing groq API key", err)
+	if err != nil {
+		t.Fatalf("resolveProvider error = %v, want metadata resolution to succeed", err)
+	}
+	if err := validateProviderCredentials(prov); err == nil || err.Error() != "groq API key not set" {
+		t.Fatalf("validateProviderCredentials error = %v, want missing groq API key", err)
 	}
 }
 
-func TestResolveProviderOverridesWormholeBaseURL(t *testing.T) {
+func TestRunDryRunDoesNotRequireAPIKey(t *testing.T) {
 	t.Parallel()
-
+	f := &flags{command: commandRefine, dryRun: true, provider: "groq", args: []string{"input"}}
 	cfg := &config.Config{
+		Provider:        "groq",
+		Effort:          "low",
+		Timeout:         60,
+		MaxOutputTokens: 4096,
 		Providers: map[string]config.ProviderConfig{
-			"wormhole": {Model: "groq/openai/gpt-oss-120b", BaseURL: "http://127.0.0.1:8080/v1"},
-			"groq":     {APIKey: "groq-key", BaseURL: "https://api.groq.example/v1"},
+			"groq": {Model: "model", BaseURL: "http://test"},
 		},
 	}
-
-	prov, err := resolveProvider(cfg, "wormhole", "http://127.0.0.1:9090/v1")
-	if err != nil {
-		t.Fatalf("resolveProvider unexpected error: %v", err)
-	}
-	if prov.Name() != "wormhole" {
-		t.Fatalf("provider = %q, want wormhole", prov.Name())
-	}
-	if got := cfg.Providers["wormhole"].BaseURL; got != "http://127.0.0.1:8080/v1" {
-		t.Errorf("loaded wormhole BaseURL mutated to %q", got)
-	}
-	if got := cfg.Providers["groq"].BaseURL; got != "https://api.groq.example/v1" {
-		t.Errorf("unselected groq BaseURL mutated to %q", got)
+	if err := run(context.Background(), f, cfg, newLogger(false)); err != nil {
+		t.Fatalf("dry run with missing API key: %v", err)
 	}
 }
 
@@ -1240,30 +1257,9 @@ func TestScanPromptsDir_DepthLimit(t *testing.T) {
 		}
 	}
 
-	entries, err := ScanPromptsDir(tmpDir)
-	if err != nil {
-		t.Fatalf("ScanPromptsDir error: %v", err)
-	}
-
-	names := make(map[string]bool, len(entries))
-	for _, e := range entries {
-		names[e.Name] = true
-	}
-
-	// Within depth limit -> must be present.
-	wantPresent := []string{"root", "d1", "d2", "d3", "d4", "d5"}
-	for _, n := range wantPresent {
-		if !names[n] {
-			t.Errorf("expected entry %q to be scanned within depth limit, got entries: %v", n, names)
-		}
-	}
-
-	// Beyond depth limit -> must be absent.
-	wantAbsent := []string{"d6", "d7"}
-	for _, n := range wantAbsent {
-		if names[n] {
-			t.Errorf("expected entry %q to be skipped beyond depth limit, but it was scanned", n)
-		}
+	_, err := ScanPromptsDir(tmpDir)
+	if err == nil || !strings.Contains(err.Error(), "depth exceeds limit") {
+		t.Fatalf("ScanPromptsDir error = %v, want explicit depth-limit error", err)
 	}
 }
 
@@ -1294,16 +1290,9 @@ func TestScanPromptsDir_FileCountLimit(t *testing.T) {
 		}
 	}
 
-	entries, err := ScanPromptsDir(tmpDir)
-	if err != nil {
-		t.Fatalf("ScanPromptsDir error: %v", err)
-	}
-
-	if len(entries) > maxScanFiles {
-		t.Errorf("got %d entries, want <= %d (maxScanFiles)", len(entries), maxScanFiles)
-	}
-	if len(entries) != maxScanFiles {
-		t.Errorf("got %d entries, want exactly %d (maxScanFiles); fewer entries suggests the limit was not the gating factor", len(entries), maxScanFiles)
+	_, err := ScanPromptsDir(tmpDir)
+	if err == nil || !strings.Contains(err.Error(), "exceeds file limit") {
+		t.Fatalf("ScanPromptsDir error = %v, want explicit file-limit error", err)
 	}
 }
 
@@ -1561,7 +1550,7 @@ func TestFinderModel_FilteringAndNavigation(t *testing.T) {
 
 func TestPrintCommandUsage(t *testing.T) {
 	t.Parallel()
-	cmds := []string{"refine", "critique", "rewrite", "apply", "browse", "image", "configure"}
+	cmds := []string{"refine", "critique", "rewrite", "apply", "browse", "image", "configure", "models"}
 	for _, cmd := range cmds {
 		var out bytes.Buffer
 		printCommandUsageTo(&out, cmd)
@@ -1577,7 +1566,7 @@ func TestPrintCommandUsage(t *testing.T) {
 
 func TestParseArgs_PublicCommands(t *testing.T) {
 	t.Parallel()
-	tests := [][]string{{"refine"}, {"critique"}, {"rewrite"}, {"apply", "refactor"}, {"browse"}, {"image"}, {"configure"}}
+	tests := [][]string{{"refine"}, {"critique"}, {"rewrite"}, {"apply", "refactor"}, {"browse"}, {"image"}, {"configure"}, {"models", "refresh"}}
 	for _, args := range tests {
 		f, err := parseArgs(args)
 		if err != nil {
@@ -1589,9 +1578,29 @@ func TestParseArgs_PublicCommands(t *testing.T) {
 	}
 }
 
+func TestParseArgsModelsRequiresRefresh(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"models"}, {"models", "newest"}, {"models", "refresh", "extra"}} {
+		if _, err := parseArgs(args); err == nil || !strings.Contains(err.Error(), "refresh") {
+			t.Errorf("parseArgs(%q) error = %v, want refresh requirement", args, err)
+		}
+	}
+}
+
+func TestParseArgsConfigHiddenAlias(t *testing.T) {
+	t.Parallel()
+	f, err := parseArgs([]string{"config"})
+	if err != nil {
+		t.Fatalf("parseArgs(config): %v", err)
+	}
+	if f.command != commandConfigure {
+		t.Fatalf("parseArgs(config) command = %q, want %q", f.command, commandConfigure)
+	}
+}
+
 func TestParseArgsRejectsLegacyCommands(t *testing.T) {
 	t.Parallel()
-	for _, command := range []string{"enhance", "run", "assemble", "find", "config", "stats", "styles", "providers", "init", "update", "version", "help"} {
+	for _, command := range []string{"enhance", "run", "assemble", "find", "stats", "styles", "providers", "init", "update", "version", "help"} {
 		if _, err := parseArgs([]string{command}); err == nil || !strings.Contains(err.Error(), "unknown command") {
 			t.Errorf("parseArgs(%q) error = %v, want unknown command", command, err)
 		}
@@ -1696,7 +1705,7 @@ func TestRunProviders(t *testing.T) {
 	}
 	var out strings.Builder
 	printProviders(&out, cfg)
-	for _, want := range []string{"gemini *", "ADC/ready", "omlx", "local/ready"} {
+	for _, want := range []string{"gemini *", "ADC/unchecked", "omlx", "local/ready"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("printProviders output missing %q:\n%s", want, out.String())
 		}
@@ -1708,13 +1717,134 @@ func TestMetadataOutputRedactsURLUserinfo(t *testing.T) {
 	cfg := &config.Config{
 		Provider: "groq",
 		Providers: map[string]config.ProviderConfig{
-			"groq": {BaseURL: "https://user:secret@example.com/v1"},
+			"groq": {BaseURL: "https://user:secret@example.com/v1?api_key=query-secret&region=us#fragment-secret"},
 		},
 	}
 	var out strings.Builder
 	printConfig(&out, cfg)
-	if strings.Contains(out.String(), "secret") || !strings.Contains(out.String(), "redacted@example.com") {
+	if strings.Contains(out.String(), "secret") || !strings.Contains(out.String(), "redacted@example.com") || !strings.Contains(out.String(), "api_key=redacted") || !strings.Contains(out.String(), "region=us") {
 		t.Fatalf("printConfig URL redaction failed:\n%s", out.String())
+	}
+}
+
+func TestPrintConfigDoesNotClaimADCReadiness(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	cfg := &config.Config{
+		Provider: "gemini",
+		Providers: map[string]config.ProviderConfig{
+			"gemini": {Model: "model"},
+		},
+	}
+	var out strings.Builder
+	printConfig(&out, cfg)
+	if strings.Contains(out.String(), "ready") || !strings.Contains(out.String(), "not checked") {
+		t.Fatalf("printConfig ADC status is misleading:\n%s", out.String())
+	}
+}
+
+func TestValidateBrowseTerminal(t *testing.T) {
+	t.Parallel()
+	if err := validateBrowseTerminal(true, true); err != nil {
+		t.Fatalf("interactive terminals rejected: %v", err)
+	}
+	for _, terminals := range [][2]bool{{false, true}, {true, false}, {false, false}} {
+		if err := validateBrowseTerminal(terminals[0], terminals[1]); err == nil {
+			t.Errorf("non-interactive terminal pair %v accepted", terminals)
+		}
+	}
+}
+
+func TestModelsHelpNamesAllNetworkSources(t *testing.T) {
+	t.Parallel()
+	var out strings.Builder
+	printCommandUsageTo(&out, commandModels)
+	for _, source := range []string{"Models.dev", "OpenRouter", "OMLX"} {
+		if !strings.Contains(out.String(), source) {
+			t.Errorf("models help missing %q:\n%s", source, out.String())
+		}
+	}
+}
+
+type terminalTestFile struct {
+	info os.FileInfo
+	err  error
+	fd   uintptr
+}
+
+func (f terminalTestFile) Stat() (os.FileInfo, error) {
+	return f.info, f.err
+}
+
+func (f terminalTestFile) Fd() uintptr {
+	return f.fd
+}
+
+type terminalTestFileInfo struct {
+	mode os.FileMode
+}
+
+func (i terminalTestFileInfo) Name() string       { return "stdin" }
+func (i terminalTestFileInfo) Size() int64        { return 0 }
+func (i terminalTestFileInfo) Mode() os.FileMode  { return i.mode }
+func (i terminalTestFileInfo) ModTime() time.Time { return time.Time{} }
+func (i terminalTestFileInfo) IsDir() bool        { return false }
+func (i terminalTestFileInfo) Sys() any           { return nil }
+
+func TestIsInteractiveTerminal(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		file         terminalTestFile
+		detector     bool
+		want         bool
+		wantDetected bool
+	}{
+		{
+			name:         "tty",
+			file:         terminalTestFile{info: terminalTestFileInfo{mode: os.ModeCharDevice}, fd: 7},
+			detector:     true,
+			want:         true,
+			wantDetected: true,
+		},
+		{
+			name:     "pipe",
+			file:     terminalTestFile{info: terminalTestFileInfo{mode: os.ModeNamedPipe}, fd: 7},
+			detector: true,
+		},
+		{
+			name:     "regular file",
+			file:     terminalTestFile{info: terminalTestFileInfo{mode: 0}, fd: 7},
+			detector: true,
+		},
+		{
+			name:         "character device but not tty",
+			file:         terminalTestFile{info: terminalTestFileInfo{mode: os.ModeCharDevice}, fd: 7},
+			detector:     false,
+			wantDetected: true,
+		},
+		{
+			name: "stat error",
+			file: terminalTestFile{err: errors.New("stat stdin")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			detected := false
+			got := isInteractiveTerminal(tt.file, func(fd uintptr) bool {
+				detected = true
+				if fd != 7 {
+					t.Errorf("detector fd = %d, want 7", fd)
+				}
+				return tt.detector
+			})
+			if got != tt.want {
+				t.Errorf("isInteractiveTerminal() = %t, want %t", got, tt.want)
+			}
+			if detected != tt.wantDetected {
+				t.Errorf("detector called = %t, want %t", detected, tt.wantDetected)
+			}
+		})
 	}
 }
 
@@ -1746,26 +1876,29 @@ func TestVersionCommand(t *testing.T) {
 func TestPopularModelsFor(t *testing.T) {
 	t.Parallel()
 
-	providers := []string{
-		"gemini",
-		"openai",
-		"groq",
-		"cerebras",
-		"openrouter",
-		"synthetic",
-		"zai",
-		"wormhole",
-		"omlx",
+	want := map[string][]string{
+		"gemini":     {"gemini-3.7-flash"},
+		"openai":     {"gpt-5.6-luna"},
+		"groq":       {"qwen/qwen3.8-27b", "qwen/qwen3.6-27b"},
+		"cerebras":   {"gpt-oss-120b", "gemma-4-31b"},
+		"deepseek":   {"deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"},
+		"openrouter": {"openrouter/free", "anthropic/claude-sonnet-5", "meta-llama/llama-3.3-70b-instruct"},
+		"zai":        {"glm-5.3-flash", "glm-5.3"},
+		"omlx":       {"Ornith-1.5-35B-A3B-oQ4e-mtp", "Qwen2.5-Coder-7B-Instruct-4bit", "Llama-3.2-3B-Instruct-4bit"},
 	}
 
-	for _, p := range providers {
+	for p, wantModels := range want {
 		models := popularModelsFor(p)
-		if len(models) < 2 {
-			t.Errorf("popularModelsFor(%q) returned %d models, want at least 2", p, len(models))
+		if len(models) != len(wantModels) {
+			t.Errorf("popularModelsFor(%q) returned %d models, want %d", p, len(models), len(wantModels))
+			continue
 		}
-		for _, m := range models {
+		for i, m := range models {
 			if m.id == "" || m.label == "" {
 				t.Errorf("popularModelsFor(%q) returned invalid model: %+v", p, m)
+			}
+			if m.id != wantModels[i] {
+				t.Errorf("popularModelsFor(%q)[%d].id = %q, want %q", p, i, m.id, wantModels[i])
 			}
 		}
 	}
@@ -1773,6 +1906,12 @@ func TestPopularModelsFor(t *testing.T) {
 	// Unknown provider should return nil
 	if unknown := popularModelsFor("unknown-prov"); unknown != nil {
 		t.Errorf("popularModelsFor(unknown-prov) = %v, want nil", unknown)
+	}
+	if got, want := popularModelsFor("zai"), []modelChoice{
+		{"glm-5.3-flash", "glm-5.3-flash (Default / High Speed)"},
+		{"glm-5.3", "glm-5.3 (Latest Flagship)"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("popularModelsFor(\"zai\") = %#v, want %#v", got, want)
 	}
 }
 

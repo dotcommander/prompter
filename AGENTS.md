@@ -6,12 +6,12 @@
 
 ## 1. Overview & Core Invariants
 
-`prompter` is a zero-dependency (core runtime), high-performance Go CLI tool that transforms rough prompt text, unstructured notes, and fragmented ideas into production-grade AI prompts. It also provides offline deterministic image prompt assembly, Markdown restructuring, prompt output validation, and an interactive Bubble Tea fuzzy finder across local prompt vaults.
+`prompter` is a focused Go CLI tool that transforms rough prompt text, unstructured notes, and fragmented ideas into production-grade AI prompts. It also provides offline deterministic image prompt assembly, Markdown restructuring, prompt output validation, and an interactive Bubble Tea fuzzy finder across local prompt vaults.
 
 ### Non-Negotiable Engineering Principles
 - **Unix Composability**: Clean, machine-usable prompt output is written strictly to `stdout`. Progress spinners, debug logs, timing metrics, and dry-run diagnostics go exclusively to `stderr`.
 - **Fail Fast, Fail Loud**: Never introduce silent fallbacks, magic defaults that mask missing credentials, or silent error suppression. If configuration is missing or an API error occurs, exit immediately with a distinct non-zero exit code (`1` for errors, `130` for `SIGINT`).
-- **Zero-Touch Startup**: Operates out of the box with Google Application Default Credentials (ADC) for Gemini or standard environment variables (`OPENAI_API_KEY`, `GROQ_API_KEY`, etc.) without requiring an initial configuration file.
+- **Zero-Touch Startup**: Operates without an initial configuration file using Google Application Default Credentials (ADC) plus a Google Cloud project environment variable for Gemini, or standard provider environment variables (`OPENAI_API_KEY`, `GROQ_API_KEY`, etc.).
 - **Offline First Where Applicable**: Image prompt construction (`image`) executes 100% offline without remote network requests.
 - **Portable Configuration**: Any generated or saved `~/.config/prompter/config.json` uses portable `~` paths (e.g. `"prompts_dir": "~/.config/prompter/prompts.d"`), dynamically expanded at runtime on macOS, Linux, and Windows.
 
@@ -29,6 +29,7 @@
 | `browse` | `prompter browse` | Launches the Bubble Tea prompt browser across local prompt directories. Selection is copied to clipboard and emitted to `stdout`. | Interactive TTY |
 | `image` | `prompter image <subject>` | Builds a detailed image-generation prompt from local modular components; it does not generate an image. | Offline / Positional args |
 | `configure` | `prompter configure` | Launches the TUI configuration wizard, or displays resolved non-secret config when non-interactive. | Interactive TTY / redirected output |
+| `models` | `prompter models refresh` | Refreshes the cached Models.dev catalog and prints the top affordable choices per provider. | Network (Models.dev + OpenRouter + local OMLX) |
 | Global flags | `prompter --help` / `prompter --version` | Prints root help or version/build information. | None |
 
 ---
@@ -58,10 +59,9 @@ Settings are resolved using a strict precedence order:
 | `<provider>.base_url` | `<PROVIDER>_BASE_URL` or `PROMPTER_<PROVIDER>_BASE_URL` | Provider default | Custom API endpoint override |
 
 ### Provider-Specific Conventions
-- **`gemini`**: Uses Google Cloud Vertex AI `GenerateContent` with Application Default Credentials (ADC) by default (`gemini.project_id` defaults to `grimoire-2025`, `gemini.location` to `global`). Also supports Google AI Studio endpoint when `GEMINI_API_KEY` is provided.
+- **`gemini`**: Uses Google Cloud Vertex AI `GenerateContent` with Application Default Credentials (ADC) by default. Vertex requires `gemini.project_id` or `PROMPTER_GEMINI_PROJECT_ID`, `GEMINI_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or `GCP_PROJECT`; `gemini.location` defaults to `global`. The Google AI Studio endpoint is used when `gemini.base_url` points at `generativelanguage.googleapis.com`, in which case `GEMINI_API_KEY` is sent as `x-goog-api-key`; an AIza key alone does not switch the default Vertex endpoint off ADC.
 - **`openai`**: Uses the OpenAI Responses API with `Instructions` for system prompt separation.
-- **`chat providers` (`cerebras`, `groq`, `openrouter`, `synthetic`, `zai`)**: Standard Chat Completions API with structured `{role: "system"}` and `{role: "user"}` payloads.
-- **`wormhole`**: Connects to local loopback proxy (`http://127.0.0.1:8080/v1`). Supports provider routing prefixes (e.g. `-m groq/openai/gpt-oss-120b`). API key is optional for unauthenticated local instances.
+- **`chat providers` (`cerebras`, `deepseek`, `groq`, `openrouter`, `zai`)**: Standard Chat Completions API with structured `{role: "system"}` and `{role: "user"}` payloads.
 - **`omlx`**: Connects to local Apple MLX server (`http://127.0.0.1:8000/v1`) with default model `Ornith-1.5-35B-A3B-oQ4e-mtp`.
 
 ---
@@ -79,7 +79,8 @@ prompter/
 ├── components.go               # Offline image prompt assembler and component statistics
 ├── rewrite.go                  # Markdown restructuring modes (clean, academic, code, etc.)
 ├── output_validation.go        # Deterministic & semantic output validator with retry loop
-├── update.go                   # Self-update command runner (go install latest)
+├── init.go                     # Starter-vault seeding with exclusive create (no overwrite)
+├── model_catalog.go            # Models.dev catalog fetch/cache; `models refresh` and configure choices
 ├── embed.go                    # Embedded FS bindings for default prompts & styles
 ├── internal/
 │   ├── config/
@@ -93,6 +94,8 @@ prompter/
 │   ├── finder_test.go          # Asserts finder documentation matches implementation
 │   ├── flags_test.go           # Asserts flags and defaults documentation accuracy
 │   └── providers_test.go       # Asserts registered provider list consistency
+├── evals/
+│   └── enhance/                # Source-bound enhancement eval harness (runner, fixtures, manifest)
 └── prompts/                    # Embedded markdown prompt templates and styles
 ```
 
@@ -115,7 +118,10 @@ flowchart TD
     
     CheckMode -- "configure (Interactive TTY)" --> ConfigTUI[Run Huh Config Wizard]
     ConfigTUI --> SaveConfig[Save ~/.config/prompter/config.json with portable ~ paths]
-    
+
+    CheckMode -- "models refresh" --> ModelsFlow[Fetch Models.dev + OpenRouter + local OMLX]
+    ModelsFlow --> PrintModels[Print affordable model choices to stdout]
+
     CheckMode -- "image" --> AssembleFlow[Image Prompt Construction]
     AssembleFlow --> LocalComponents[Combine Local Components in Memory]
     LocalComponents --> OutputResult[Write to stdout / --output / Clipboard]
@@ -142,7 +148,7 @@ flowchart TD
 2. **Context Assembly**: Combines system prompts (embedded templates or custom catalog files) with user input into a unified `provider.CallRequest{Model, SystemPrompt, UserPrompt, Effort}`.
 3. **Payload Formatting**:
    - **OpenAI**: Encoded for OpenAI Responses API with `Instructions`.
-   - **Gemini**: Encoded for Vertex AI `GenerateContent` using Google ADC bearer token or AI Studio key.
+   - **Gemini**: Encoded for Vertex AI `GenerateContent` using a Google ADC bearer token, or for the AI Studio endpoint (`generativelanguage.googleapis.com`) using `x-goog-api-key`.
    - **Chat Completions**: Standard JSON payload with `{role: "system", content: ...}` and `{role: "user", content: ...}`.
 4. **Output Routing**:
    - Streamed or buffered prompt text is written strictly to `stdout` or `--output`.
@@ -175,6 +181,9 @@ gofmt -l .
 1. **Doctest Compliance**:
    - `doctests/finder_test.go` asserts that `docs/finder.md` explicitly documents stdout behavior using phrases like `Stdout`/`printed to stdout`.
    - `doctests/flags_test.go` asserts required flag documentation in `docs/flags.md`.
-   - `doctests/providers_test.go` asserts that all registered provider names (`cerebras`, `gemini`, `groq`, `omlx`, `openai`, `openrouter`, `synthetic`, `wormhole`, `zai`) are documented in `docs/providers.md` and `AGENTS.md`.
+   - `doctests/providers_test.go` asserts that all registered provider names (`cerebras`, `deepseek`, `gemini`, `groq`, `omlx`, `openai`, `openrouter`, `zai`) are documented in `docs/providers.md` and `AGENTS.md`.
 2. **Flag Interspersing**: After the explicit command, positional arguments and command-owned flags can appear in any order (e.g. `prompter refine "prompt text" -p openai -s concise`). Flag parsing logic in `cli_flow.go` uses `interspersedFlagArgs`.
 3. **Output Validation Protocol**: When catalog prompts declare validation frontmatter, `prompter apply` enforces length ratios, sentence bounds, and optional LLM semantic evaluation. Streaming is strictly disallowed for validated prompts.
+4. **Mandatory Neutral Commit Guidance (Zero-Beacon Policy)**: Commit subjects and bodies must be completely standard, boring, and neutral engineering descriptions (Conventional Commits format). Never hype, sensationalize, or broadcast security, vulnerability, credential, or secret-related concerns.
+   - **No Telltale / Alarmist Phrasing**: Never use phrases like "security fix", "critical vulnerability", "prevent credential leak", "remove secret", "scrub internal term X", "fix private project leak", or "patch security flaw". These act as neon beacons inviting attackers or researchers to audit git history.
+   - **Always Frame as Standard Capability / Maintenance**: Describe only the resulting capability, architectural change, or configuration parameterization (e.g. use `refactor(config): parameterize provider options` instead of `fix: remove hardcoded project id and secrets`; use `refactor(styles): standardize system prompt style resolution` instead of `refactor: remove internal term X`).

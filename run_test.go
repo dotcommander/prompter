@@ -11,11 +11,11 @@ import (
 
 func TestParseArgsApply(t *testing.T) {
 	t.Parallel()
-	f, err := parseArgs([]string{"apply", "grai-transform", "source text", "--provider", "openai"})
+	f, err := parseArgs([]string{"apply", "custom-transform", "source text", "--provider", "openai"})
 	if err != nil {
 		t.Fatalf("parseArgs: %v", err)
 	}
-	if f.command != commandApply || f.promptName != "grai-transform" {
+	if f.command != commandApply || f.promptName != "custom-transform" {
 		t.Fatalf("command = %q, prompt = %q", f.command, f.promptName)
 	}
 	if strings.Join(f.args, " ") != "source text" {
@@ -63,9 +63,9 @@ func TestResolveCommandSystemPromptApply(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "deep-time.md")
-	writeRunTestFile(t, path, "---\ndescription: test\naliases:\n  - grai-transform\n---\n\n# Prompt body\n")
+	writeRunTestFile(t, path, "---\ndescription: test\naliases:\n  - custom-transform\n---\n\n# Prompt body\n")
 	cfg := &config.Config{PromptsDir: dir, PromptsDirs: []string{dir}}
-	f := &flags{command: commandApply, promptName: "grai-transform"}
+	f := &flags{command: commandApply, promptName: "custom-transform"}
 
 	if err := resolveCommandSystemPrompt(f, cfg); err != nil {
 		t.Fatalf("resolveCommandSystemPrompt: %v", err)

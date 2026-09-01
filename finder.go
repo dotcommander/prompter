@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -316,7 +317,7 @@ func (m *finderModel) View() tea.View {
 // Returns nil if the user cancelled (Ctrl+C, Esc).
 func RunFinder(entries []PromptEntry, dirs ...string) (*PromptEntry, error) {
 	return runFinder(entries, dirs, func(m tea.Model) (tea.Model, error) {
-		p := tea.NewProgram(m)
+		p := tea.NewProgram(m, tea.WithInput(os.Stdin), tea.WithOutput(os.Stderr))
 		return p.Run()
 	})
 }
