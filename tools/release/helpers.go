@@ -245,3 +245,7 @@ func samePaths(observed []string, expected ...string) bool {
 	slices.Sort(expected)
 	return slices.Equal(observed, expected)
 }
+
+func releaseFetchArgs() []string {
+	return []string{"fetch", "--no-prune", "--no-tags", "origin"}
+}
