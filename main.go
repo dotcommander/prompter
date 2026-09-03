@@ -5,20 +5,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/atotto/clipboard"
-	"github.com/charmbracelet/x/term"
 	"github.com/dotcommander/prompter/internal/config"
 	"github.com/dotcommander/prompter/internal/provider"
 )
@@ -179,6 +176,10 @@ type flags struct {
 }
 
 func parseArgs(args []string) (*flags, error) {
+	return parseArgsTo(args, os.Stderr)
+}
+
+func parseArgsTo(args []string, stderr io.Writer) (*flags, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("command required")
 	}
@@ -194,7 +195,7 @@ func parseArgs(args []string) (*flags, error) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if hasHelpFlag(args) {
-		printCommandUsageTo(os.Stderr, f.command)
+		printCommandUsageTo(stderr, f.command)
 		return nil, flag.ErrHelp
 	}
 
@@ -313,16 +314,6 @@ func isCommand(value string) bool {
 	}
 }
 
-func printUsage() {
-	printUsageTo(os.Stderr)
-}
-
-// exitWithError prints an error to stderr and exits with code 1.
-func exitWithError(err error) {
-	fmt.Fprintf(os.Stderr, "error: %v\n", err)
-	os.Exit(1)
-}
-
 func readInput(file string, args []string) (string, error) {
 	if file != "" {
 		input, err := readFileInput(file)
@@ -368,11 +359,15 @@ func writeOutput(path, content string) error {
 }
 
 func newLogger(verbose bool) *slog.Logger {
+	return newLoggerTo(os.Stderr, verbose)
+}
+
+func newLoggerTo(stderr io.Writer, verbose bool) *slog.Logger {
 	level := slog.LevelWarn
 	if verbose {
 		level = slog.LevelDebug
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	return slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{
 		Level: level,
 	}))
 }
@@ -730,125 +725,6 @@ func rootArgs(args []string, stdinPiped bool) []string {
 		return append([]string{commandRefine}, args...)
 	}
 	return args
-}
-
-// -----------------------------------------------------------------------------
-// Main
-// -----------------------------------------------------------------------------
-
-func main() {
-	args := rootArgs(os.Args[1:], isStdinPiped())
-
-	// Fast-path root help and version without loading configuration.
-	if len(args) == 0 {
-		printUsage()
-		return
-	}
-	if len(args) == 1 {
-		switch args[0] {
-		case "--version", "-V":
-			printVersion(os.Stdout)
-			return
-		case "--help", "-h":
-			printUsage()
-			return
-		}
-	}
-
-	f, err := parseArgs(args)
-	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			os.Exit(0)
-		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(2)
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		exitWithError(err)
-	}
-
-	switch f.command {
-	case commandBrowse:
-		if err := validateBrowseTerminal(
-			isInteractiveTerminal(os.Stdin, term.IsTerminal),
-			isInteractiveTerminal(os.Stderr, term.IsTerminal),
-		); err != nil {
-			exitWithError(err)
-		}
-		if err := showFinder(cfg); err != nil {
-			exitWithError(err)
-		}
-		return
-	case commandConfigure:
-		if !isInteractiveTerminal(os.Stdin, term.IsTerminal) || !isInteractiveTerminal(os.Stdout, term.IsTerminal) {
-			printConfig(os.Stdout, cfg)
-			return
-		}
-		service, err := newModelCatalogService()
-		if err != nil {
-			exitWithError(err)
-		}
-		catalog, _, err := service.loadOrFetch(context.Background(), cfg)
-		if err != nil {
-			useEmbedded, confirmErr := confirmEmbeddedModelCatalog(err)
-			if confirmErr != nil {
-				exitWithError(confirmErr)
-			}
-			if !useEmbedded {
-				exitWithError(err)
-			}
-		}
-		if err := RunConfigForm(cfg, catalogModelChoices(catalog)); err != nil {
-			exitWithError(err)
-		}
-		return
-	case commandModels:
-		service, err := newModelCatalogService()
-		if err != nil {
-			exitWithError(err)
-		}
-		catalog, err := service.refresh(context.Background(), cfg)
-		if err != nil {
-			exitWithError(err)
-		}
-		printModelCatalog(os.Stdout, catalog)
-		return
-	case commandPrompts:
-		if err := runPromptMaintenance(os.Stdout, cfg.PromptsDir, f.promptAction, f.dryRun); err != nil {
-			exitWithError(err)
-		}
-		return
-	}
-
-	if f.command == commandRefine || f.command == commandCritique || f.command == commandApply || f.command == commandRewrite || f.command == commandImage {
-		if len(f.args) == 0 && f.file == "" && !isStdinPiped() {
-			exitWithError(fmt.Errorf("%s requires input", f.command))
-		}
-	}
-
-	if err := resolveCommandSystemPrompt(f, cfg); err != nil {
-		exitWithError(err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt)
-	go func() {
-		<-sigChan
-		cancel()
-		fmt.Fprintf(os.Stderr, "\r\033[K")
-	}()
-
-	logger := newLogger(f.verbose)
-
-	if err := run(ctx, f, cfg, logger); err != nil {
-		if ctx.Err() != nil {
-			os.Exit(130)
-		}
-		exitWithError(err)
-	}
 }
 
 func validateBrowseTerminal(stdinTerminal, stderrTerminal bool) error {
