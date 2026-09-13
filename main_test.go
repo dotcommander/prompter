@@ -1915,7 +1915,7 @@ func TestPopularModelsFor(t *testing.T) {
 		"openai":     {"gpt-5.6-luna"},
 		"groq":       {"qwen/qwen3.8-27b", "qwen/qwen3.6-27b"},
 		"cerebras":   {"gpt-oss-120b", "gemma-4-31b"},
-		"deepseek":   {"deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"},
+		"deepseek":   {"deepseek-v4.1-flash", "deepseek-v4.1-flash", "deepseek-v4.1-flash-vision-exp"},
 		"openrouter": {"openrouter/free", "anthropic/claude-sonnet-5", "meta-llama/llama-3.3-70b-instruct"},
 		"zai":        {"glm-5.3-flash", "glm-5.3"},
 		"omlx":       {"Ornith-1.5-35B-A3B-oQ4e-mtp", "Qwen2.5-Coder-7B-Instruct-4bit", "Llama-3.2-3B-Instruct-4bit"},

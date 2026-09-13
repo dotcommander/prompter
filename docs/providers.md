@@ -70,7 +70,7 @@ Built-in model defaults:
 - `openai`: `gpt-5.6-luna`
 - `groq`: `qwen/qwen3.8-27b`
 - `cerebras`: `gpt-oss-120b`
-- `deepseek`: `deepseek-v4-pro`
+- `deepseek`: `deepseek-v4.1-flash`
 - `openrouter`: `openrouter/free`
 - `zai`: `glm-5.3-flash`
 - `gemini`: `gemini-3.7-flash`
