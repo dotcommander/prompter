@@ -359,17 +359,7 @@ func (p *geminiProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("gemini stream: %w", err)
 	}
-	if terminalErr != nil {
-		return terminalErr
-	}
-	if !completed {
-		return newCompletionError(p.Name(), "missing_terminal_status", p.maxOutputTokens, wrote)
-	}
-	if !wrote {
-		return fmt.Errorf("gemini: stream produced no output")
-	}
-
-	return nil
+	return streamCompletionError(p.Name(), p.maxOutputTokens, wrote, completed, terminalErr)
 }
 
 func readGeminiBody(r io.Reader, limit int64) ([]byte, bool, error) {

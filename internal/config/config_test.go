@@ -159,7 +159,7 @@ func TestDefaultProviderModels(t *testing.T) {
 	want := map[string]string{
 		"openai":     "gpt-5.6-luna",
 		"cerebras":   "gpt-oss-120b",
-		"deepseek":   "deepseek-v4-pro",
+		"deepseek":   "deepseek-v4.1-flash",
 		"groq":       "qwen/qwen3.8-27b",
 		"openrouter": "openrouter/free",
 		"zai":        "glm-5.3-flash",

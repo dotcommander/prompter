@@ -113,9 +113,9 @@ func popularModelsFor(p string, discovered ...map[string][]modelChoice) []modelC
 		}
 	case "deepseek":
 		return []modelChoice{
-			{"deepseek-v4-pro", "deepseek-v4-pro (Default)"},
-			{"deepseek-v4-flash", "deepseek-v4-flash"},
-			{"deepseek-v4-flash-vision-exp", "deepseek-v4-flash-vision-exp (Experimental Vision)"},
+			{"deepseek-v4.1-flash", "deepseek-v4.1-flash (Default)"},
+			{"deepseek-v4.1-flash", "deepseek-v4.1-flash"},
+			{"deepseek-v4.1-flash-vision-exp", "deepseek-v4.1-flash-vision-exp (Experimental Vision)"},
 		}
 	case "openrouter":
 		return []modelChoice{

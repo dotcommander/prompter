@@ -16,6 +16,11 @@ import (
 
 type executionStage func(*executionPipeline) *executionStatus
 
+type commandOutput struct {
+	stdout io.Writer
+	stderr io.Writer
+}
+
 type executionStatus struct {
 	code int
 	err  error
@@ -24,27 +29,34 @@ type executionStatus struct {
 // executionPipeline owns the ordered process lifecycle. Commands retain their
 // existing configuration, provider, input, and output behavior.
 type executionPipeline struct {
+	ctx    context.Context
 	args   []string
 	stdout io.Writer
 	stderr io.Writer
 
 	flags      *flags
 	cfg        *config.Config
-	runCommand func(context.Context, *flags, *config.Config, *slog.Logger) error
+	runCommand func(context.Context, *flags, *config.Config, *slog.Logger, commandOutput) error
 }
 
-func newExecutionPipeline(args []string, stdout, stderr io.Writer) *executionPipeline {
-	return &executionPipeline{args: args, stdout: stdout, stderr: stderr, runCommand: run}
+func newExecutionPipeline(ctx context.Context, args []string, stdout, stderr io.Writer) *executionPipeline {
+	return &executionPipeline{ctx: ctx, args: args, stdout: stdout, stderr: stderr, runCommand: runWithOutput}
 }
 
 func main() {
-	if code := execute(os.Args[1:], os.Stdout, os.Stderr); code != 0 {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if code := executeContext(ctx, os.Args[1:], os.Stdout, os.Stderr); code != 0 {
 		os.Exit(code)
 	}
 }
 
 func execute(args []string, stdout, stderr io.Writer) int {
-	return newExecutionPipeline(args, stdout, stderr).run()
+	return executeContext(context.Background(), args, stdout, stderr)
+}
+
+func executeContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return newExecutionPipeline(ctx, args, stdout, stderr).run()
 }
 
 func (p *executionPipeline) run() int {
@@ -57,6 +69,9 @@ func (p *executionPipeline) run() int {
 		(*executionPipeline).executeCommand,
 	} {
 		if status := stage(p); status != nil {
+			if p.ctx.Err() != nil {
+				return 130
+			}
 			if status.err != nil {
 				fmt.Fprintf(p.stderr, "error: %v\n", status.err)
 			}
@@ -117,7 +132,7 @@ func (p *executionPipeline) routeLocalCommand() *executionStatus {
 		); err != nil {
 			return &executionStatus{code: 1, err: err}
 		}
-		return commandStatus(showFinder(p.cfg))
+		return commandStatus(showFinder(p.cfg, commandOutput{stdout: p.stdout, stderr: p.stderr}))
 	case commandConfigure:
 		if !isInteractiveTerminal(os.Stdin, term.IsTerminal) || !isInteractiveTerminal(os.Stdout, term.IsTerminal) {
 			printConfig(p.stdout, p.cfg)
@@ -127,7 +142,7 @@ func (p *executionPipeline) routeLocalCommand() *executionStatus {
 		if err != nil {
 			return commandStatus(err)
 		}
-		catalog, _, err := service.loadOrFetch(context.Background(), p.cfg)
+		catalog, _, err := service.loadOrFetch(p.ctx, p.cfg)
 		if err != nil {
 			useEmbedded, confirmErr := confirmEmbeddedModelCatalog(err)
 			if confirmErr != nil {
@@ -143,7 +158,7 @@ func (p *executionPipeline) routeLocalCommand() *executionStatus {
 		if err != nil {
 			return commandStatus(err)
 		}
-		catalog, err := service.refresh(context.Background(), p.cfg)
+		catalog, err := service.refresh(p.ctx, p.cfg)
 		if err != nil {
 			return commandStatus(err)
 		}
@@ -167,34 +182,11 @@ func (p *executionPipeline) validate() *executionStatus {
 }
 
 func (p *executionPipeline) executeCommand() *executionStatus {
-	ctx, cancel := context.WithCancel(context.Background())
-	sigChan := make(chan os.Signal, 1)
-	done := make(chan struct{})
-	interruptDone := make(chan struct{})
-	signal.Notify(sigChan, os.Interrupt)
-	go func() {
-		defer close(interruptDone)
-		select {
-		case <-sigChan:
-			cancel()
-			fmt.Fprintf(p.stderr, "\r\033[K")
-		case <-done:
-		}
-	}()
-
-	err := p.runCommand(ctx, p.flags, p.cfg, newLoggerTo(p.stderr, p.flags.verbose))
-	wasCanceled := ctx.Err() != nil
-	signal.Stop(sigChan)
-	close(done)
-	<-interruptDone
-	cancel()
-	if err == nil {
-		return &executionStatus{}
+	err := p.runCommand(p.ctx, p.flags, p.cfg, newLoggerTo(p.stderr, p.flags.verbose), commandOutput{stdout: p.stdout, stderr: p.stderr})
+	if p.ctx.Err() != nil {
+		fmt.Fprint(p.stderr, "\r\033[K")
 	}
-	if wasCanceled {
-		return &executionStatus{code: 130}
-	}
-	return &executionStatus{code: 1, err: err}
+	return commandStatus(err)
 }
 
 func commandStatus(err error) *executionStatus {

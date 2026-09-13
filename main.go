@@ -106,14 +106,16 @@ type Spinner struct {
 	model    string
 	start    time.Time
 	logger   *slog.Logger
+	stderr   io.Writer
 }
 
-func NewSpinner(logger *slog.Logger, model string) *Spinner {
+func NewSpinner(logger *slog.Logger, model string, stderr io.Writer) *Spinner {
 	return &Spinner{
 		done:   make(chan struct{}),
 		model:  model,
 		start:  time.Now(),
 		logger: logger,
+		stderr: stderr,
 	}
 }
 
@@ -129,7 +131,7 @@ func (s *Spinner) Start() {
 				return
 			case <-ticker.C:
 				elapsed := time.Since(s.start).Round(100 * time.Millisecond)
-				fmt.Fprintf(os.Stderr, "\r%s %s %v", frames[i%len(frames)], s.model, elapsed)
+				fmt.Fprintf(s.stderr, "\r%s %s %v", frames[i%len(frames)], s.model, elapsed)
 				i++
 			}
 		}
@@ -139,7 +141,7 @@ func (s *Spinner) Start() {
 func (s *Spinner) Stop() time.Duration {
 	s.stopOnce.Do(func() { close(s.done) })
 	elapsed := time.Since(s.start)
-	fmt.Fprintf(os.Stderr, "\r\033[K")
+	fmt.Fprintf(s.stderr, "\r\033[K")
 	s.logger.Info("completed", "model", s.model, "duration", elapsed.Round(time.Millisecond))
 	return elapsed
 }
@@ -421,6 +423,10 @@ func validateProviderCredentials(prov provider.Provider) error {
 // -----------------------------------------------------------------------------
 
 func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger) error {
+	return runWithOutput(ctx, f, cfg, logger, commandOutput{stdout: os.Stdout, stderr: os.Stderr})
+}
+
+func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger, output commandOutput) error {
 	if f.stream && f.outputValidation != nil {
 		return fmt.Errorf("--stream cannot be used with prompt output validation")
 	}
@@ -432,7 +438,7 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 	}
 	switch f.command {
 	case commandImage:
-		return runAssemble(f, cfg)
+		return runAssemble(f, cfg, output)
 	}
 
 	prov, err := resolveProvider(cfg, f.provider, f.baseURL)
@@ -470,7 +476,7 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 	}
 
 	if f.dryRun {
-		printDryRun(os.Stderr, prov, modelName, f, cfg, input, timeout)
+		printDryRun(output.stderr, prov, modelName, f, cfg, input, timeout)
 		return nil
 	}
 	if err := validateProviderCredentials(prov); err != nil {
@@ -500,17 +506,17 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 	if f.stream {
 		logger.Debug("streaming")
 		start := time.Now()
-		if err := prov.StreamCall(callCtx, req, os.Stdout); err != nil {
+		if err := prov.StreamCall(callCtx, req, output.stdout); err != nil {
 			return timeoutErr(err)
 		}
-		fmt.Println()
+		fmt.Fprintln(output.stdout)
 		logger.Info("completed", "model", modelName, "duration", time.Since(start).Round(time.Millisecond))
 		return nil
 	}
 
 	var spinner *Spinner
 	if f.verbose {
-		spinner = NewSpinner(logger, modelName)
+		spinner = NewSpinner(logger, modelName, output.stderr)
 		spinner.Start()
 	}
 
@@ -539,15 +545,19 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 			}
 			logger.Debug("clipboard unavailable in headless environment", "error", err)
 		} else {
-			fmt.Fprintln(os.Stderr, "Copied to clipboard")
+			fmt.Fprintln(output.stderr, "Copied to clipboard")
 		}
 	}
-	if strings.HasSuffix(result, "\n") {
-		fmt.Print(result)
-	} else {
-		fmt.Println(result)
-	}
+	printResult(output.stdout, result)
 	return nil
+}
+
+func printResult(w io.Writer, result string) {
+	if strings.HasSuffix(result, "\n") {
+		fmt.Fprint(w, result)
+		return
+	}
+	fmt.Fprintln(w, result)
 }
 
 func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags, cfg *config.Config, input string, timeout time.Duration) {
@@ -615,7 +625,7 @@ func dryRunCredentialSource(providerName string, providerConfig config.ProviderC
 	return defaultKeyEnvFor(providerName)
 }
 
-func runAssemble(f *flags, cfg *config.Config) error {
+func runAssemble(f *flags, cfg *config.Config, output commandOutput) error {
 	if f.count < 1 {
 		return fmt.Errorf("--count must be >= 1")
 	}
@@ -653,42 +663,38 @@ func runAssemble(f *flags, cfg *config.Config) error {
 		results = append(results, assembled)
 	}
 
-	var output string
+	var result string
 	if f.json {
 		data, err := json.MarshalIndent(singleOrMany(results), "", "  ")
 		if err != nil {
 			return fmt.Errorf("encode assemble json: %w", err)
 		}
-		output = string(data) + "\n"
+		result = string(data) + "\n"
 	} else {
 		var b strings.Builder
-		for i, result := range results {
+		for i, prompt := range results {
 			if len(results) > 1 {
 				fmt.Fprintf(&b, "=== Variation %d ===\n", i+1)
 			}
-			fmt.Fprintln(&b, result.FullPrompt)
+			fmt.Fprintln(&b, prompt.FullPrompt)
 			if i < len(results)-1 {
 				fmt.Fprintln(&b)
 			}
 		}
-		output = b.String()
+		result = b.String()
 	}
 	if f.output != "" {
-		if err := writeOutput(f.output, output); err != nil {
+		if err := writeOutput(f.output, result); err != nil {
 			return err
 		}
 	}
 	if f.copy || cfg.DefaultCopy {
-		if err := copyToClipboard(output); err != nil {
+		if err := copyToClipboard(result); err != nil {
 			return err
 		}
-		fmt.Fprintln(os.Stderr, "Copied to clipboard")
+		fmt.Fprintln(output.stderr, "Copied to clipboard")
 	}
-	if strings.HasSuffix(output, "\n") {
-		fmt.Print(output)
-	} else {
-		fmt.Println(output)
-	}
+	printResult(output.stdout, result)
 	return nil
 }
 
@@ -803,14 +809,14 @@ func ensurePromptVaultWithInit(cfg *config.Config, strict bool, initFn func(io.W
 }
 
 // showFinder scans the prompts directory and shows the fuzzy finder.
-func showFinder(cfg *config.Config) error {
+func showFinder(cfg *config.Config, output commandOutput) error {
 	entries, dirs, err := ensurePromptVault(cfg)
 	if err != nil {
 		return err
 	}
 
 	if len(entries) == 0 {
-		fmt.Fprintf(os.Stderr, "No prompts found in %s. Add a .md prompt file and run 'prompter browse' again.\n", strings.Join(dirs, ", "))
+		fmt.Fprintf(output.stderr, "No prompts found in %s. Add a .md prompt file and run 'prompter browse' again.\n", strings.Join(dirs, ", "))
 		return nil
 	}
 
@@ -826,14 +832,10 @@ func showFinder(cfg *config.Config) error {
 
 	// Copy to clipboard
 	if err := copyToClipboard(selected.Content); err != nil {
-		fmt.Fprintf(os.Stderr, "clipboard: %v\n", err)
+		fmt.Fprintf(output.stderr, "clipboard: %v\n", err)
 	}
 
-	if strings.HasSuffix(selected.Content, "\n") {
-		fmt.Print(selected.Content)
-	} else {
-		fmt.Println(selected.Content)
-	}
+	printResult(output.stdout, selected.Content)
 	return nil
 }
 

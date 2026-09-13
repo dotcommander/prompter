@@ -184,7 +184,7 @@ func DefaultProviders() map[string]ProviderConfig {
 			BaseURL: "https://api.cerebras.ai/v1",
 		},
 		"deepseek": {
-			Model:   "deepseek-v4-pro",
+			Model:   "deepseek-v4.1-flash",
 			BaseURL: "https://api.deepseek.com",
 		},
 		"groq": {

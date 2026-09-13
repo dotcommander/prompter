@@ -51,6 +51,29 @@ func TestExecutionPipelineCommandHelp(t *testing.T) {
 	}
 }
 
+func TestPrintResultPreservesFinalNewline(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		input  string
+		output string
+	}{
+		{name: "adds missing newline", input: "result", output: "result\n"},
+		{name: "preserves final newline", input: "result\n", output: "result\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			var output bytes.Buffer
+			printResult(&output, test.input)
+			if got := output.String(); got != test.output {
+				t.Fatalf("printResult(%q) = %q, want %q", test.input, got, test.output)
+			}
+		})
+	}
+}
+
 func TestExecutionPipelineParseFailure(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := execute([]string{"unknown"}, &stdout, &stderr); code != 2 {
@@ -78,13 +101,26 @@ func TestCommandRequiresInput(t *testing.T) {
 }
 
 func TestExecutionPipelineCommandFailure(t *testing.T) {
+	t.Parallel()
+
 	wantErr := errors.New("command failed")
-	var stderr bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	var stdout, stderr bytes.Buffer
 	pipeline := &executionPipeline{
+		ctx:    ctx,
+		stdout: &stdout,
 		stderr: &stderr,
 		flags:  &flags{},
 		cfg:    &config.Config{},
-		runCommand: func(context.Context, *flags, *config.Config, *slog.Logger) error {
+		runCommand: func(gotCtx context.Context, _ *flags, _ *config.Config, _ *slog.Logger, output commandOutput) error {
+			if gotCtx != ctx {
+				t.Fatal("command context does not match pipeline context")
+			}
+			if output.stdout != &stdout || output.stderr != &stderr {
+				t.Fatalf("command output = %+v, want pipeline writers", output)
+			}
 			return wantErr
 		},
 	}
@@ -92,5 +128,75 @@ func TestExecutionPipelineCommandFailure(t *testing.T) {
 	status := pipeline.executeCommand()
 	if status.code != 1 || !errors.Is(status.err, wantErr) {
 		t.Fatalf("executeCommand() = %+v, want code 1 and command error", status)
+	}
+}
+
+func TestExecutionPipelineCanceledContextReturns130(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	if code := executeContext(ctx, []string{"--help"}, &stdout, &stderr); code != 130 {
+		t.Fatalf("executeContext canceled code = %d, want 130", code)
+	}
+	if strings.Contains(stderr.String(), "error:") {
+		t.Fatalf("stderr = %q, want no command error", stderr.String())
+	}
+}
+
+func TestRunWithOutputDryRunUsesProvidedStderr(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	f := &flags{command: commandRefine, dryRun: true, provider: "groq", args: []string{"input"}}
+	cfg := &config.Config{
+		Provider:        "groq",
+		Effort:          "low",
+		Timeout:         60,
+		MaxOutputTokens: 4096,
+		Providers: map[string]config.ProviderConfig{
+			"groq": {Model: "model", BaseURL: "http://test"},
+		},
+	}
+
+	if err := runWithOutput(context.Background(), f, cfg, newLoggerTo(&stderr, false), commandOutput{stdout: &stdout, stderr: &stderr}); err != nil {
+		t.Fatalf("runWithOutput dry run: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want empty", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "Dry run: no API call made") {
+		t.Fatalf("stderr = %q, want dry-run diagnostics", stderr.String())
+	}
+}
+
+func TestSpinnerStopUsesProvidedStderr(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	NewSpinner(newLoggerTo(&stderr, false), "model", &stderr).Stop()
+	if got := stderr.String(); got != "\r\033[K" {
+		t.Fatalf("spinner stderr = %q, want clear sequence", got)
+	}
+}
+
+func TestRunAssembleUsesProvidedOutput(t *testing.T) {
+	t.Parallel()
+
+	var stdout, stderr bytes.Buffer
+	err := runAssemble(
+		&flags{args: []string{"portrait of a clockmaker"}, count: 1, profile: "minimal"},
+		&config.Config{},
+		commandOutput{stdout: &stdout, stderr: &stderr},
+	)
+	if err != nil {
+		t.Fatalf("runAssemble: %v", err)
+	}
+	if stdout.Len() == 0 {
+		t.Fatal("stdout is empty, want assembled prompt")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 }

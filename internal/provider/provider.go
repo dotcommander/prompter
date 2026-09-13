@@ -183,16 +183,7 @@ func (p *openAIProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 	if err := stream.Err(); err != nil {
 		return fmt.Errorf("openai stream: %w", err)
 	}
-	if terminalErr != nil {
-		return terminalErr
-	}
-	if !completed {
-		return newCompletionError(p.Name(), "missing_terminal_status", p.maxOutputTokens, wrote)
-	}
-	if !wrote {
-		return fmt.Errorf("openai: stream produced no output")
-	}
-	return nil
+	return streamCompletionError(p.Name(), p.maxOutputTokens, wrote, completed, terminalErr)
 }
 
 // mapEffort converts a validated effort string to the SDK constant.
@@ -303,16 +294,7 @@ func (p *chatProvider) StreamCall(ctx context.Context, req CallRequest, w io.Wri
 	if err := stream.Err(); err != nil {
 		return fmt.Errorf("%s stream: %w", p.name, err)
 	}
-	if terminalErr != nil {
-		return terminalErr
-	}
-	if !completed {
-		return newCompletionError(p.name, "missing_terminal_status", p.maxOutputTokens, wrote)
-	}
-	if !wrote {
-		return fmt.Errorf("%s: stream produced no output", p.name)
-	}
-	return nil
+	return streamCompletionError(p.name, p.maxOutputTokens, wrote, completed, terminalErr)
 }
 
 // -----------------------------------------------------------------------------
