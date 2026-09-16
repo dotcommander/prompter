@@ -185,3 +185,6 @@ gofmt -l .
    - `doctests/providers_test.go` asserts that all registered provider names (`cerebras`, `deepseek`, `gemini`, `groq`, `omlx`, `openai`, `openrouter`, `zai`) are documented in `docs/providers.md` and `AGENTS.md`.
 2. **Flag Interspersing**: After the explicit command, positional arguments and command-owned flags can appear in any order (e.g. `prompter refine "prompt text" -p openai -s concise`). Flag parsing logic in `cli_flow.go` uses `interspersedFlagArgs`.
 3. **Output Validation Protocol**: When catalog prompts declare validation frontmatter, `prompter apply` enforces length ratios, sentence bounds, and optional LLM semantic evaluation. Streaming is strictly disallowed for validated prompts.
+Read and apply `/Users/vampire/.agents/AGENTS.md` completely, then
+`/Users/vampire/code/go/src/AGENTS.md`, before this file. This file contains
+repository-specific guidance only.
