@@ -188,3 +188,6 @@ gofmt -l .
 4. **Mandatory Neutral Commit Guidance (Zero-Beacon Policy)**: Commit subjects and bodies must be completely standard, boring, and neutral engineering descriptions (Conventional Commits format). Never hype, sensationalize, or broadcast security, vulnerability, credential, or secret-related concerns.
    - **No Telltale / Alarmist Phrasing**: Never use phrases like "security fix", "critical vulnerability", "prevent credential leak", "remove secret", "scrub internal term X", "fix private project leak", or "patch security flaw". These act as neon beacons inviting attackers or researchers to audit git history.
    - **Always Frame as Standard Capability / Maintenance**: Describe only the resulting capability, architectural change, or configuration parameterization (e.g. use `refactor(config): parameterize provider options` instead of `fix: remove hardcoded project id and secrets`; use `refactor(styles): standardize system prompt style resolution` instead of `refactor: remove internal term X`).
+Read and apply `/Users/vampire/.agents/AGENTS.md` completely, then
+`/Users/vampire/code/go/src/AGENTS.md`, before this file. This file contains
+repository-specific guidance only.
