@@ -1,92 +1,62 @@
 # Setup
 
-Purpose: install prompter, configure one provider, and verify a working run.
+Build Prompter from this checkout, confirm the offline path, then configure a provider only when you need remote prompt operations.
 
-## Prerequisites
+## First check: offline image prompt
 
-- Go installed and `$(go env GOPATH)/bin` in your `PATH`
-- API key for one remote provider, or a running local OMLX server
-
-## Main workflow
-
-1. Install:
- 
-**Using Homebrew (macOS & Linux):**
-```bash
-brew install dotcommander/tap/prompter
-```
-
-**Or using the Go toolchain:**
-```bash
-go install github.com/dotcommander/prompter@latest
-```
-
-Update to future releases with the same installation method, for example:
+**Prerequisite:** this module declares Go `1.26.3`. Run the command from the repository root; `GOWORK=off` selects this module rather than a parent Go workspace.
 
 ```bash
-go install github.com/dotcommander/prompter@latest
+GOWORK=off go run . image "desert observatory" --profile minimal
 ```
 
-2. Run immediately after authenticating Google ADC and selecting your project:
+It prints an assembled image-generation prompt. The image command loads a local component library and builds text; it does not make a provider request or generate an image.
+
+Source-checked, unexecuted variation: add `--json` to produce a JSON object for the default single result.
 
 ```bash
-export GOOGLE_CLOUD_PROJECT="your-project-id"
-prompter refine "explain this code"
+GOWORK=off go run . image "desert observatory" --json
 ```
 
-3. Or use any remote provider using standard environment variables:
+## Build a local binary
+
+Source-checked, unexecuted for this documentation task:
 
 ```bash
-export OPENAI_API_KEY="sk-..."
-prompter refine -p openai "explain this code"
+GOWORK=off go build -o prompter .
 ```
 
-4. Interactive configuration wizard (optional):
+This creates `./prompter`. Use `./prompter --help` to list commands before making a remote request.
+
+## Configure a remote provider
+
+Remote `refine`, `critique`, `rewrite`, and `apply` operations need a resolved provider. `prompter configure` opens its form only when standard input and output are interactive terminals. With redirected output, it prints the resolved non-secret configuration instead.
+
+Prompter reads configuration in this order:
+
+```text
+CLI flags > environment variables > ~/.config/prompter/config.json > defaults
+```
+
+The configuration file can hold the provider, model, endpoint, prompt locations, component-library location, timeout, output-token budget, retry count, and buffered-result clipboard preference. See [Providers](providers.md) for supported providers and [CLI flags](flags.md) for command overrides.
+
+## Verify a change
+
+Source-checked, unexecuted for this documentation task:
 
 ```bash
-prompter configure
+GOWORK=off go build ./...
+GOWORK=off go test -count=1 ./...
+GOWORK=off go test -count=1 ./doctests/...
+GOWORK=off go vet ./...
+gofmt -l .
 ```
 
-`prompter configure` launches an interactive setup form in your terminal to configure:
-- Default LLM provider (Gemini, OpenAI, Groq, Cerebras, DeepSeek, OpenRouter, Zai, OMLX)
-- Default model identifier
-- API key environment variable constant names (e.g. `$OPENAI_API_KEY`)
-- Reasoning effort level (`low`, `medium`, `high`)
-- Default automatic clipboard copying
-
-Settings are saved to `~/.config/prompter/config.json` using portable machine paths.
-If the primary prompt vault is empty, `configure` also auto-seeds the starter prompts.
-
-Re-running `prompter configure` refreshes the configuration file. It persists
-the active provider, key-variable name, model, base URL, effort, and clipboard
-preference. Inline `api_key` values are never written to disk — keys stay in
-environment variables or the configured `key_env` name.
- 
-5. Browse your prompt vault (optional):
-
-```bash
-prompter browse
-```
-
-The browser searches configured prompt directories recursively. If the primary vault is empty, it seeds the curated starter prompts before opening.
-
-6. Refresh the model catalog (optional):
-
-```bash
-prompter models refresh
-```
-
-This fetches Models.dev and OpenRouter metadata, caches up to five affordable choices per provider, and prints them. `configure` uses the same cache to populate model choices, falling back to built-in choices when the fetch fails.
-
-
-## Verification checklist
-
-- Command prints enhanced text
-- `prompter refine -v "test"` includes timing output
+The `justfile` provides the same checks through `just qa`; it runs formatting verification, vet, tests, doctests, and a build.
 
 ## Related docs
 
-- `common-tasks.md`
-- `flags.md`
-- `troubleshooting.md`
-- `use-json-output.md`
+- [CLI flags](flags.md)
+- [Prompt files](prompt-files.md)
+- [Providers](providers.md)
+- [Troubleshooting](troubleshooting.md)

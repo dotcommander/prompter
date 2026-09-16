@@ -1,77 +1,53 @@
-# Fuzzy Finder
+# Prompt browser
 
-Purpose: browse and select prompt files interactively.
+Browse a local prompt vault, choose one entry interactively, and receive its body on standard output.
 
 ## Triggering the Finder
 
-The finder is launched using `prompter browse`:
+**Prerequisite:** run this command in an interactive terminal. `browse` requires interactive standard input and standard error; it rejects piped input. An empty pipe without a command instead defaults to `refine` and then fails because its input is empty.
 
 ```bash
-# Launch interactive fuzzy finder
 prompter browse
 ```
 
-Running bare `prompter` on an interactive terminal displays help. An empty pipe
-or other piped input without a command exits with a `command required` error
-instead of opening the finder.
-
-## How Search Works
-
-The finder uses weighted fuzzy search to rank results.
-
-| Field | Weight | Example |
-|-------|--------|---------|
-| Name | 1000 | `ultrathink` matches filename/name |
-| Aliases | 500 | `ut` matches an alias, role trigger, or role example |
-| Path | 300 | `think` matches file path |
-| Description | 100 | matches frontmatter description |
-| Body | 10 | matches prompt content |
-
-## Keyboard Controls
-
-| Key | Action |
-|-----|--------|
-| `Enter` | Select prompt and copy to clipboard |
-| `Esc` / `Ctrl+C` | Cancel and exit |
-| Type | Filter prompts by search term |
-| ↑/↓ | Move selection (also `Ctrl+P`/`Ctrl+K`, `Ctrl+N`/`Ctrl+J`) |
-| `PgUp` / `PgDn` | Jump 5 entries |
+The browser scans the configured prompt directories and lets you filter entries. Press `Enter` to select an entry. `Esc` or `Ctrl+C` cancels without a selection.
 
 ## Output
 
-When you select a prompt:
+Selecting an entry attempts clipboard integration on macOS, Linux, and Windows, then prints its body to stdout. If the clipboard write fails, Prompter reports that diagnostic and still prints the selected body to stdout.
 
-1. Clipboard: content is copied to clipboard (macOS, Linux, Windows).
-2. Stdout: full content is also printed to stdout.
+If the primary prompt directory is empty, the browser creates it and seeds starter prompts before scanning. To avoid the interactive interface, use `prompter prompts status` or `prompter prompts upgrade --dry-run` instead.
 
-The interactive screen uses `stderr`, so it remains usable when `stdin` is an
-interactive terminal and prompt content is redirected from `stdout`.
+## How Search Works
 
-```bash
-# Save selected prompt to a file
-prompter browse > prompt.txt
-```
+The browser uses weighted fuzzy search to rank entries across frontmatter and body text with the following weights:
+
+| Field | Weight |
+| --- | ---: |
+| Name | 1000 |
+| Aliases, triggers, and examples | 500 |
+| Path | 300 |
+| Description | 100 |
+| Body | 10 |
+
+Higher-weight matches appear first. Frontmatter supplies the searchable name, description, aliases, triggers, and examples; see [Prompt files](prompt-files.md) for the file format.
+
+## Keyboard controls
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Select the highlighted prompt. |
+| `Esc` or `Ctrl+C` | Cancel. |
+| Type | Filter entries. |
+| Arrow keys, `Ctrl+P`/`Ctrl+K`, `Ctrl+N`/`Ctrl+J` | Move the selection. |
+| `PgUp` or `PgDn` | Move five entries. |
 
 ## Configuration
 
-Finder scans `prompts_dir` from config:
-
-```json
-{
-  "prompts_dir": "~/.config/prompter/prompts.d",
-  "prompts_dirs": [
-    "~/.config/prompter/prompts.d",
-    "~/.config/roles/prompts"
-  ]
-}
-```
-
-If `prompts_dirs` is unset, the finder also scans `~/.config/roles/prompts` when that directory exists.
-
-On first launch, an empty primary directory is created and seeded with the eight starter prompts (enhance, critique, rewrite, refactor, code-review, system-architect, git-commit, unit-test).
+The primary default directory is `~/.config/prompter/prompts.d`. Unless `prompts_dirs` is configured, Prompter also searches `~/.config/roles/prompts`.
 
 ## Related docs
 
-- `prompt-files.md`
-- `common-tasks.md`
-- `use-json-output.md`
+- [Prompt files](prompt-files.md)
+- [Automation](use-json-output.md)
+- [Troubleshooting](troubleshooting.md)
