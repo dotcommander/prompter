@@ -1,32 +1,32 @@
 # Prompter
 
-Turn rough prompt material into a usable prompt from the terminal. From this checkout, start with the offline image assembler: it prints an assembled prompt to standard output and needs no provider credentials.
+Turn rough prompt material into usable AI prompts from the terminal. From this checkout, begin with the credential-free `image` command: it assembles prompt text from local components and prints that text to standard output; it does not generate an image.
 
-| If you want to… | Start with… | What happens |
+| Goal | Command | Result |
 | --- | --- | --- |
-| Assemble an image prompt without a network call | `image <subject>` | Prints an assembled prompt built from local components. |
-| Improve, critique, rewrite, or apply a prompt | `refine`, `critique`, `rewrite`, or `apply` | Sends the prepared input to the configured LLM provider. |
-| Find or maintain local prompt files | `browse` or `prompts status\|upgrade` | Searches the prompt vault or reports/stages starter-prompt changes. |
-| Inspect or change resolved settings | `configure` | Opens the terminal wizard, or prints non-secret settings when output is redirected. |
-| Refresh model choices | `models refresh` | Fetches catalog data and updates the local model-choice cache. |
+| Assemble an image prompt offline | `image <subject>` | Prints prompt text built from a subject and local components. |
+| Improve or assess prompt material | `refine`, `critique`, or `rewrite` | Sends the prepared input to the selected LLM provider. |
+| Apply a saved prompt | `apply <prompt-name> [input]` | Uses a catalog prompt selected by exact name or alias. |
+| Work with local prompt files | `browse` or `prompts status\|upgrade` | Browses a vault or inspects and stages starter-prompt updates. |
+| Inspect settings or model choices | `configure` or `models refresh` | Prints or changes resolved settings, or refreshes the model-choice cache. |
 
 ## First use: assemble an offline image prompt
 
-**Prerequisite:** this module declares Go `1.26.3`. The command below is safe to run from a checkout; `GOWORK=off` makes it use this module rather than a parent workspace.
+**Prerequisite:** this module declares Go `1.26.3`. Run this command from the repository root; `GOWORK=off` selects this module instead of a parent Go workspace.
 
 ```bash
 GOWORK=off go run . image "desert observatory" --profile minimal
 ```
 
-It prints an image-generation prompt to standard output. In the checked runtime, the result was:
+It prints:
 
 ```text
 desert observatory, clean composition, concept art
 ```
 
-The command selects a local assembly profile and combines the supplied subject with embedded components. It builds prompt text only; it does not generate an image.
+The `minimal` profile combines the supplied subject with selected local components. It builds a prompt string only, so it makes no provider request and does not create an image.
 
-Source-checked variation (not executed for this README): request structured output with `--json`.
+Source-checked, not executed for this README: add `--json` to emit the assembled result as JSON.
 
 ```bash
 GOWORK=off go run . image "desert observatory" --json
@@ -40,52 +40,43 @@ Prompter resolves settings in this order:
 CLI flags > environment variables > ~/.config/prompter/config.json > defaults
 ```
 
-`prompter configure` opens a configuration form on an interactive terminal. When standard output is redirected, it prints resolved non-secret settings instead. Configuration includes the active provider, model, provider endpoint, prompt locations, image component file, timeout, output-token budget, retry count, and buffered-result clipboard preference.
+`prompter configure` opens a configuration form only when standard input and output are interactive terminals. With redirected output, it prints the resolved non-secret configuration instead. The configuration file stores provider, prompt-directory, component-library, timeout, output-token, retry, and clipboard settings.
 
-The prompt vault is configured through `prompts_dir` and `prompts_dirs`. `browse` searches local Markdown prompt files; an empty primary vault can be seeded with starter prompts. `models refresh` stores its catalog cache at `~/.config/prompter/models-dev.json`.
+By default, the primary prompt directory is `~/.config/prompter/prompts.d`; the configured prompt search directories also include `~/.config/roles/prompts`. The default component-library location is `~/.config/prompter/components.json`. `models refresh` stores its cache at `~/.config/prompter/models-dev.json`.
 
 ## Non-goals and operating limits
 
-- `image` assembles an image-generation prompt; it does not create an image.
-- `models refresh` is a networked catalog refresh, unlike the offline image path above.
-- A streamed provider response can write partial text before the provider reports a failed or incomplete terminal state. Treat streamed output from a nonzero exit as unusable.
-- Prompt-output validation requires buffered output, so validated `apply` prompts reject `--stream`.
+- `image` assembles image-generation prompt text; it does not generate an image.
+- `browse` requires interactive standard input and standard error terminals.
+- `models refresh` makes network requests to refresh catalog data; it is not part of the offline image path.
+- Validated catalog prompts reject `--stream`, because validation needs buffered output.
+- A streamed provider call can write partial text before it exits with an error; discard captured streamed output after a nonzero exit.
 
 ## Capability reference
 
-### LLM prompt operations
+### Prompt operations
 
-`refine`, `critique`, `rewrite`, and `apply` accept input from arguments, `--file`, or standard input. `apply` selects a catalog prompt by exact name or alias; its prompt body becomes the system prompt and its frontmatter is not sent to the provider.
+`refine`, `critique`, `rewrite`, and `apply` take input from positional arguments, `--file`, or standard input. `apply` requires a prompt name or alias; it uses the selected prompt body's text as the system prompt after parsing its frontmatter.
 
-Use command help to inspect supported flags before making a remote request:
+Before a remote operation, inspect the command-specific options:
 
 ```bash
-prompter refine --help
+prompter <command> --help
 ```
 
-The LLM commands support provider/model selection, file input, output-file writing, buffered clipboard copying, dry-run inspection, streaming, endpoint overrides, and verbose timing. `--output` writes the buffered result both to the named file and standard output; it cannot be combined with `--stream`.
+This source-checked, unexecuted example is the safe way to inspect the accepted flags without contacting a provider. LLM commands support provider, model, endpoint, file-input, output-file, clipboard, dry-run, streaming, and verbose-timing options. `--output` writes a buffered result to both its named file and standard output; it cannot be combined with `--stream`.
 
 ### Local prompt vault
 
-```bash
-prompter prompts status
-prompter prompts upgrade --dry-run
-```
-
-`status` classifies starter prompts. `upgrade --dry-run` previews missing-prompt installation and versioned replacement candidates without writing them. A non-dry-run upgrade installs missing prompts and stages replacements rather than overwriting existing files.
+`prompter browse` opens the interactive local prompt browser. `prompter prompts status` classifies starter prompts. `prompter prompts upgrade --dry-run` previews changes without writing; without `--dry-run`, upgrades install missing prompts and place replacement candidates alongside existing files rather than overwriting them.
 
 ### Configuration and model catalog
 
-```bash
-prompter configure
-prompter models refresh
-```
-
-Run `configure` on an interactive terminal for the form. Run `models refresh` only when a networked catalog update is intended; it refreshes choices from Models.dev, OpenRouter, and a local OMLX endpoint when available.
+`prompter configure` is the terminal configuration route described above. `prompter models refresh` fetches Models.dev and OpenRouter catalog data, then writes the local cache; it also attempts to include choices from the local OMLX server.
 
 ## Verification and contribution
 
-From the repository root, run:
+Source-checked, not executed for this documentation-only change:
 
 ```bash
 GOWORK=off go test -count=1 ./...
@@ -94,16 +85,10 @@ GOWORK=off go vet ./...
 gofmt -l .
 ```
 
-The first command runs the repository test packages. The build produces a local `prompter` binary. A clean `gofmt -l .` produces no path output.
+The test command runs repository test packages. The build creates a local `prompter` binary. `gofmt -l .` prints paths only for files that need formatting.
 
-For detailed command flags, setup notes, prompt-file format, providers, and troubleshooting, see:
-
-- [Setup](docs/setup.md)
-- [Flags](docs/flags.md)
-- [Prompt files](docs/prompt-files.md)
-- [Providers](docs/providers.md)
-- [Troubleshooting](docs/troubleshooting.md)
+For detailed setup, flags, prompt-file format, provider behavior, automation, and troubleshooting, see [the documentation index](docs/index.md), [Setup](docs/setup.md), [CLI flags](docs/flags.md), [Prompt files](docs/prompt-files.md), [Providers](docs/providers.md), [Automation](docs/use-json-output.md), and [Troubleshooting](docs/troubleshooting.md).
 
 ## Limits and non-goals
 
-Remote prompt operations need a configured provider and its applicable authentication. The offline `image` command is the credential-free path.
+Remote prompt operations need a configured provider. The offline `image` command is the supported credential-free path.

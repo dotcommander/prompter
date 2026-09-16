@@ -1,72 +1,38 @@
-# Use CLI Output in Automation
+# Automation and image JSON
 
-Purpose: integrate prompter in scripts and tools using a stable stdout/stderr contract.
+Use explicit commands in scripts, capture standard output as the result, and treat a nonzero exit as failure even when a stream has already written text.
 
-## Prerequisites
+## First automation check
 
-- Prompter installed on the machine
-- Configured provider API key
-
-## Main workflow or contract
-
-- Input contract:
-  - `prompter refine "text"` or `echo "text" | prompter refine` runs refinement.
-  - `prompter` with no command prints usage help. Do not use `prompter browse` in unattended automation.
-- Output contract:
-  - Enhanced prompt text is written to stdout.
-  - Errors and verbose timing are written to stderr.
-- Exit behavior:
-  - Exit code `0` on success.
-  - Exit code `1` on validation, config, or provider errors.
-  - Exit code `2` on unknown commands or invalid command-line syntax.
-  - Exit code `130` on Ctrl+C.
-  - Streaming may write partial text before a truncation error; discard captured
-    output whenever the exit code is nonzero.
-
-Automation-safe examples:
+**Prerequisite:** the image command is the credential-free path. Run this source-checked, unexecuted example from the repository root when you need structured output.
 
 ```bash
-# Safe non-interactive call
-prompter refine "normalize this prompt"
-
-# Capture stdout only
-result="$(prompter refine "write release notes")"
-
-# Keep stderr separate
-prompter refine -v "write changelog" 1>enhanced.txt 2>debug.log
+GOWORK=off go run . image "desert observatory" --json
 ```
 
-## JSON output (`image`)
+With the default `--count 1`, it prints one JSON object containing the assembled prompt and its selected components. With `--count N` for `N > 1`, it prints a JSON array. The same image assembly that produces text output produces these objects; it does not contact a provider.
 
-Only `prompter image` emits JSON (`--json`). The shape depends on `--count`:
+## Standard streams and exit codes
 
-- `--count 1` (default) → a single JSON object
-- `--count N` (N > 1) → a JSON array of objects
+Remote generated text and image results are written to standard output. Errors and verbose timing are written to standard error. Prompter exits `0` on success, `1` for runtime, configuration, validation, or provider errors, `2` for command-line syntax or command errors, and `130` after cancellation.
+
+When standard input is piped with no command, Prompter defaults to `refine`. Interactive bare `prompter` prints usage. Use an explicit command in scripts so a future reader can see the intended operation.
+
+## Capture safely
+
+The following source-checked, unexecuted example captures only standard output:
 
 ```bash
-# Single result (default) is a bare object
-prompter image "desert observatory" --json | jq -r '.full_prompt'
-
-# Multiple results are an array
-prompter image "desert observatory" --count 3 --json | jq -r '.[].full_prompt'
-
-# Normalize either shape before further processing
-prompter image "portrait of a clockmaker" --json |
-  jq -c 'if type == "array" then .[] else . end'
+result="$(prompter refine "normalize this prompt")"
 ```
 
-Remote commands (`refine`, `critique`, `rewrite`, `apply`) emit plain text on
-stdout; they have no JSON mode. Use `--dry-run` for resolved-setting diagnostics
-on stderr, but rely on the exit code and stdout/stderr contract above.
+It can make a remote provider request. Check the exit status before using `result`. With `--stream`, Prompter can write partial text before a provider reports an incomplete terminal state, so discard captured stream output after any nonzero exit.
 
-## Verification checklist
-
-- Integration path uses an explicit command such as `prompter refine ...`
-- Automation does not call bare `prompter` without input
-- Caller handles non-zero exit codes
+`--output` is a buffered-output feature: it writes the result to its named file and standard output. It cannot be combined with `--stream`. `--dry-run` writes resolved-setting diagnostics to standard error and does not make a provider request.
 
 ## Related docs
 
-- `setup.md`
-- `common-tasks.md`
-- `troubleshooting.md`
+- [Common tasks](common-tasks.md)
+- [CLI flags](flags.md)
+- [Prompt files](prompt-files.md)
+- [Troubleshooting](troubleshooting.md)
