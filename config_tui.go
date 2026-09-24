@@ -35,20 +35,8 @@ func defaultKeyEnvFor(p string) string {
 	}
 }
 
-func defaultModelFor(p string) string {
-	defaults := config.DefaultProviders()
-	if def, ok := defaults[p]; ok && def.Model != "" {
-		return def.Model
-	}
-	return ""
-}
-
-func defaultBaseURLFor(p string) string {
-	defaults := config.DefaultProviders()
-	if def, ok := defaults[p]; ok && def.BaseURL != "" {
-		return def.BaseURL
-	}
-	return ""
+func defaultProviderFor(p string) config.ProviderConfig {
+	return config.DefaultProviders()[p]
 }
 
 func isProviderConfigured(p string, cfg *config.Config) (bool, string) {
@@ -230,6 +218,7 @@ func RunConfigForm(cfg *config.Config) error {
 
 	// Adjust defaults for newly selected provider
 	pCfg := cfg.Providers[selectedProvider]
+	providerDefault := defaultProviderFor(selectedProvider)
 	var keyEnv string
 	if pCfg.KeyEnv != "" {
 		keyEnv = pCfg.KeyEnv
@@ -240,7 +229,7 @@ func RunConfigForm(cfg *config.Config) error {
 	if pCfg.Model != "" {
 		model = pCfg.Model
 	} else {
-		model = defaultModelFor(selectedProvider)
+		model = providerDefault.Model
 	}
 	baseURL := pCfg.BaseURL
 
@@ -276,7 +265,7 @@ func RunConfigForm(cfg *config.Config) error {
 	customModelInput := huh.NewInput().
 		Title("Custom Model Identifier").
 		Description("(Optional) Only applied when 'Custom model' is selected above").
-		Placeholder(defaultModelFor(selectedProvider)).
+		Placeholder(providerDefault.Model).
 		Value(&customModelInputVal)
 
 	effortSelect := huh.NewSelect[string]().
@@ -330,7 +319,7 @@ func RunConfigForm(cfg *config.Config) error {
 		Placeholder(defaultKeyEnvFor(selectedProvider)).
 		Value(&keyEnv)
 
-	baseURLPlaceholder := defaultBaseURLFor(selectedProvider)
+	baseURLPlaceholder := providerDefault.BaseURL
 	if baseURLPlaceholder == "" {
 		baseURLPlaceholder = "https://api.example.com/v1"
 	}
@@ -369,7 +358,7 @@ func RunConfigForm(cfg *config.Config) error {
 		if trimmed := strings.TrimSpace(customModelInputVal); trimmed != "" {
 			finalModel = trimmed
 		} else {
-			finalModel = defaultModelFor(selectedProvider)
+			finalModel = providerDefault.Model
 		}
 	}
 

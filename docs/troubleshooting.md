@@ -40,7 +40,7 @@ The configuration form requires an interactive terminal on both stdin and stdout
 
 ## Timeout or retry behavior
 
-Request timeouts and retries come from the configuration (`timeout` in seconds, `max_retries`); streaming enforces a minimum timeout of 180 seconds. `prompter --config` shows the resolved values.
+Request timeouts come from configuration (`timeout` in seconds); streaming enforces a minimum timeout of 180 seconds. `max_retries` remains in configuration for compatibility but generation requests are not automatically retried: after a transport or server failure, the provider may already have processed the request. A manual retry is a new request and may incur additional usage. `prompter --config` shows the resolved values.
 
 ## Input size errors
 

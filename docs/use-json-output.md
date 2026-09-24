@@ -56,7 +56,7 @@ prompter refine --dry-run --provider groq > /dev/null
 
 ## Input limits
 
-Input from arguments, files, or stdin is capped at 1 MB; exceeding it exits 1. Timeout and retry behavior come from the configuration (`timeout`, `max_retries`).
+Input from arguments, files, or stdin is capped at 1 MB; exceeding it exits 1. `timeout` controls request duration. `max_retries` remains accepted for compatibility but generation requests are not automatically replayed after ambiguous failures; see [Troubleshooting](troubleshooting.md#timeout-or-retry-behavior).
 
 ## Related pages
 

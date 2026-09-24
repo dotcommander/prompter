@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
@@ -29,7 +28,20 @@ type CLIInputReader struct {
 
 func (r *CLIInputReader) Read() (string, error) {
 	if len(r.args) > 0 {
-		return strings.Join(r.args, " "), nil
+		var input strings.Builder
+		for i, arg := range r.args {
+			if i > 0 {
+				if input.Len() >= maxInputBytes {
+					return "", inputTooLarge()
+				}
+				input.WriteByte(' ')
+			}
+			if len(arg) > maxInputBytes-input.Len() {
+				return "", inputTooLarge()
+			}
+			input.WriteString(arg)
+		}
+		return input.String(), nil
 	}
 	return readStdin()
 }
@@ -59,40 +71,35 @@ func isInteractiveTerminal(file terminalFile, detector func(uintptr) bool) bool 
 
 const maxInputBytes = 1 << 20 // 1 MB
 
+func inputTooLarge() error {
+	return fmt.Errorf("input exceeds %d bytes (1 MB limit; use --file or split large inputs)", maxInputBytes)
+}
+
 func readLimited(r io.Reader) (string, error) {
-	limited := io.LimitReader(r, maxInputBytes+1)
-	reader := bufio.NewReader(limited)
-	var builder strings.Builder
-
-	for {
-		line, err := reader.ReadString('\n')
-		builder.WriteString(line)
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", err
-		}
+	data, err := io.ReadAll(io.LimitReader(r, maxInputBytes+1))
+	if err != nil {
+		return "", err
 	}
-
-	if builder.Len() > maxInputBytes {
-		return "", fmt.Errorf("input exceeds %d bytes (1 MB limit; use --file or split large inputs)", maxInputBytes)
+	if len(data) > maxInputBytes {
+		return "", inputTooLarge()
 	}
-
-	return builder.String(), nil
+	return string(data), nil
 }
 
-func readStdin() (string, error) {
-	return readLimited(os.Stdin)
-}
-
-func readFileInput(path string) (string, error) {
+// readBoundedFile reads a file under the 1 MB ceiling that governs every
+// prompter input: --file input, stdin material, and user-configured prompt,
+// style, and components files.
+func readBoundedFile(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
 	return readLimited(f)
+}
+
+func readStdin() (string, error) {
+	return readLimited(os.Stdin)
 }
 
 // -----------------------------------------------------------------------------
@@ -172,10 +179,6 @@ type flags struct {
 	args       []string
 }
 
-func parseArgs(args []string) (*flags, error) {
-	return parseArgsTo(args, os.Stderr)
-}
-
 func parseArgsTo(args []string, stderr io.Writer) (*flags, error) {
 	command, rest, err := selectOperation(args)
 	if err != nil {
@@ -186,12 +189,11 @@ func parseArgsTo(args []string, stderr io.Writer) (*flags, error) {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if hasHelpFlag(rest) {
+	registerFlags(fs, f)
+	if hasHelpFlag(fs, rest) {
 		printCommandUsageTo(stderr, command)
 		return nil, flag.ErrHelp
 	}
-
-	registerFlags(fs, f)
 
 	parsed := interspersedFlagArgs(fs, rest)
 	if err := fs.Parse(parsed); err != nil {
@@ -210,16 +212,10 @@ func parseArgsTo(args []string, stderr io.Writer) (*flags, error) {
 	return f, nil
 }
 
-func hasHelpFlag(args []string) bool {
-	for _, arg := range args {
-		if arg == "--" {
-			return false
-		}
-		if arg == "-h" || arg == "--help" {
-			return true
-		}
-	}
-	return false
+// hasHelpFlag reports a help request outside flag values and literal input, so
+// a value such as --file -h stays data instead of triggering usage output.
+func hasHelpFlag(fs *flag.FlagSet, args []string) bool {
+	return containsControlFlag(fs, args, "-h") || containsControlFlag(fs, args, "--help")
 }
 
 func registerFlags(fs *flag.FlagSet, f *flags) {
@@ -266,7 +262,7 @@ func registerOutputFlags(fs *flag.FlagSet, f *flags) {
 
 func readInput(file string, args []string) (string, error) {
 	if file != "" {
-		input, err := readFileInput(file)
+		input, err := readBoundedFile(file)
 		if err != nil {
 			return "", fmt.Errorf("reading file input: %w", err)
 		}
@@ -306,10 +302,6 @@ func writeOutput(path, content string) error {
 		return fmt.Errorf("write output: %w", err)
 	}
 	return nil
-}
-
-func newLogger(verbose bool) *slog.Logger {
-	return newLoggerTo(os.Stderr, verbose)
 }
 
 func newLoggerTo(stderr io.Writer, verbose bool) *slog.Logger {
@@ -369,10 +361,6 @@ func validateProviderCredentials(prov provider.Provider) error {
 // -----------------------------------------------------------------------------
 // Run
 // -----------------------------------------------------------------------------
-
-func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger) error {
-	return runWithOutput(ctx, f, cfg, logger, commandOutput{stdout: os.Stdout, stderr: os.Stderr})
-}
 
 func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger, output commandOutput) error {
 	if f.stream && f.output != "" {

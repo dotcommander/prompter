@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/dotcommander/prompter/internal/config"
 )
+
+func execute(args []string, stdout, stderr io.Writer) int {
+	return executeContext(context.Background(), args, stdout, stderr)
+}
 
 func TestExecutionPipelineMetadata(t *testing.T) {
 	for _, test := range []struct {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -359,6 +360,62 @@ func TestSaveConfigAndKeyEnv(t *testing.T) {
 	}
 	if !loaded.DefaultCopy {
 		t.Errorf("loaded.DefaultCopy = %v, want true", loaded.DefaultCopy)
+	}
+}
+
+func TestSaveReplacesExistingConfigOnRepeatedCalls(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".config", "prompter", "config.json")
+	cfg := &Config{Provider: "groq", Providers: DefaultProviders()}
+	for _, provider := range []string{"groq", "openai", "openai"} {
+		cfg.Provider = provider
+		if err := Save(cfg); err != nil {
+			t.Fatalf("Save(%s): %v", provider, err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read config: %v", err)
+		}
+		if !strings.Contains(string(data), `"provider": "`+provider+`"`) {
+			t.Fatalf("saved config does not contain provider %q", provider)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0600 {
+			t.Fatalf("config mode = %v, stat error = %v", info, err)
+		}
+	}
+}
+
+func TestWriteConfigAtomicallyPreservesOldFileWhenReplaceFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	original := []byte(`{"provider":"groq"}`)
+	if err := os.WriteFile(path, original, 0600); err != nil {
+		t.Fatalf("create old config: %v", err)
+	}
+	failure := errors.New("replace unavailable")
+	err := writeConfigAtomically(path, []byte(`{"provider":"openai"}`), func(src, dst string) error {
+		if dst != path {
+			t.Fatalf("replace destination = %q, want %q", dst, path)
+		}
+		info, err := os.Stat(src)
+		if err != nil || info.Mode().Perm() != 0600 {
+			t.Fatalf("temporary config mode = %v, stat error = %v", info, err)
+		}
+		return failure
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("replace error = %v, want wrapped failure", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(original) {
+		t.Fatalf("old config = %q, read error = %v", got, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "config.json" {
+		t.Fatalf("remaining entries = %v, read error = %v", entries, err)
 	}
 }
 

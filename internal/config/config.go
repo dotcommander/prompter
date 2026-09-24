@@ -452,7 +452,7 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes the Config to ~/.config/prompter/config.json.
+// Save atomically replaces ~/.config/prompter/config.json with the resolved Config.
 func Save(cfg *Config) error {
 	path := getConfigPath()
 	if path == "" {
@@ -499,7 +499,41 @@ func Save(cfg *Config) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
-	return os.WriteFile(path, append(data, '\n'), 0600)
+	return writeConfigAtomically(path, append(data, '\n'), os.Rename)
+}
+
+// writeConfigAtomically keeps the last complete config in place until a fully
+// written, synced replacement is ready. The temporary file shares its directory
+// with the destination so rename does not cross filesystems.
+func writeConfigAtomically(path string, data []byte, replace func(string, string) error) (err error) {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary config: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	defer tmp.Close()
+	if err = tmp.Chmod(0600); err != nil {
+		return fmt.Errorf("set config permissions: %w", err)
+	}
+	if _, err = tmp.Write(data); err != nil {
+		return fmt.Errorf("write temporary config: %w", err)
+	}
+	if err = tmp.Sync(); err != nil {
+		return fmt.Errorf("sync temporary config: %w", err)
+	}
+	if err = tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary config: %w", err)
+	}
+	if err = replace(tmpPath, path); err != nil {
+		return fmt.Errorf("replace config: %w", err)
+	}
+	return nil
 }
 
 // validEfforts is the single source of truth for accepted effort values.

@@ -83,23 +83,7 @@ func printConfig(w io.Writer, cfg *config.Config) {
 		if p.Model != "" {
 			fmt.Fprintf(w, "Active Model:      %s\n", p.Model)
 		}
-		keyVar := p.KeyEnv
-		if keyVar == "" {
-			keyVar = defaultKeyEnvFor(cfg.Provider)
-		}
-		if cfg.Provider == "omlx" {
-			fmt.Fprintf(w, "Auth Key:          $%s (local server / keyless)\n", keyVar)
-		} else if cfg.Provider == "gemini" {
-			if os.Getenv("GEMINI_API_KEY") != "" {
-				fmt.Fprintf(w, "Auth Key:          $GEMINI_API_KEY (detected ✓)\n")
-			} else {
-				fmt.Fprintf(w, "Auth Key:          Google ADC (not checked)\n")
-			}
-		} else if val := os.Getenv(keyVar); val != "" {
-			fmt.Fprintf(w, "Auth Key:          $%s (detected ✓)\n", keyVar)
-		} else {
-			fmt.Fprintf(w, "Auth Key:          $%s (not set ✗)\n", keyVar)
-		}
+		fmt.Fprintln(w, authKeyLine(cfg.Provider, p))
 		if p.BaseURL != "" {
 			fmt.Fprintf(w, "Base URL:          %s\n", redactURLUserinfo(p.BaseURL))
 		}
@@ -115,6 +99,28 @@ func printConfig(w io.Writer, cfg *config.Config) {
 	if cfg.ComponentsFile != "" {
 		fmt.Fprintf(w, "Components File:   %s\n", cfg.ComponentsFile)
 	}
+}
+
+// authKeyLine describes the active provider's credential source for the
+// resolved-settings display without exposing the secret itself.
+func authKeyLine(providerName string, p config.ProviderConfig) string {
+	keyVar := p.KeyEnv
+	if keyVar == "" {
+		keyVar = defaultKeyEnvFor(providerName)
+	}
+	switch providerName {
+	case "omlx":
+		return fmt.Sprintf("Auth Key:          $%s (local server / keyless)", keyVar)
+	case "gemini":
+		if os.Getenv("GEMINI_API_KEY") != "" {
+			return "Auth Key:          $GEMINI_API_KEY (detected ✓)"
+		}
+		return "Auth Key:          Google ADC (not checked)"
+	}
+	if os.Getenv(keyVar) != "" {
+		return fmt.Sprintf("Auth Key:          $%s (detected ✓)", keyVar)
+	}
+	return fmt.Sprintf("Auth Key:          $%s (not set ✗)", keyVar)
 }
 
 func redactURLUserinfo(raw string) string {

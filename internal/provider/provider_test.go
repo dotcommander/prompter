@@ -231,27 +231,66 @@ func TestChatProviderStreamRequiresStopTerminalState(t *testing.T) {
 	}
 }
 
-func TestGeminiProviderRetriesTransientResponses(t *testing.T) {
+func TestGeminiProviderDoesNotRetryAmbiguousOutcome(t *testing.T) {
 	t.Parallel()
 
-	attempts := 0
-	transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
-		attempts++
-		if attempts < 3 {
-			return statusResponse(http.StatusInternalServerError, "text/plain", []byte("retry")), nil
-		}
-		return statusResponse(http.StatusOK, "application/json", []byte(`{"candidates":[{"content":{"parts":[{"text":"complete"}]},"finishReason":"STOP"}]}`)), nil
-	})
-	prov := NewGemini("test-token", "project", "global", "model", "http://test", 2, 1024)
-	gemini := prov.(*geminiProvider)
-	gemini.client = &http.Client{Transport: transport}
-
-	got, err := prov.Call(context.Background(), CallRequest{Model: "model", UserPrompt: "input"})
-	if err != nil {
-		t.Fatalf("Call: %v", err)
+	for _, tc := range []struct {
+		name     string
+		response *http.Response
+		failure  error
+	}{
+		{name: "server error", response: statusResponse(http.StatusInternalServerError, "text/plain", []byte("retry"))},
+		{name: "transport failure after send", failure: errors.New("connection lost")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			attempts := 0
+			transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				attempts++
+				return tc.response, tc.failure
+			})
+			prov := NewGemini("test-token", "project", "global", "model", "http://test", 2, 1024)
+			prov.(*geminiProvider).client = &http.Client{Transport: transport}
+			_, err := prov.Call(context.Background(), CallRequest{Model: "model", UserPrompt: "input"})
+			if err == nil || attempts != 1 {
+				t.Fatalf("Call error = %v, attempts = %d; want failure after one attempt", err, attempts)
+			}
+		})
 	}
-	if got != "complete" || attempts != 3 {
-		t.Fatalf("Call = %q after %d attempts, want complete after 3", got, attempts)
+}
+
+func TestSDKProvidersDoNotRetryGeneration(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		newProvider func() Provider
+	}{
+		{name: "openai", newProvider: func() Provider { return NewOpenAI("key", "model", "http://test", 3, 1024) }},
+		{name: "chat", newProvider: func() Provider { return NewChat("groq", "key", "model", "http://test", 3, 1024) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			prov := tc.newProvider()
+			attempts := 0
+			transport := roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				attempts++
+				return nil, errors.New("connection lost after send")
+			})
+			httpClient := &http.Client{Transport: transport}
+			// Rebuild from the constructor's options, retaining its retry policy.
+			switch p := prov.(type) {
+			case *openAIProvider:
+				client := openai.NewClient(append(p.client.Options, option.WithHTTPClient(httpClient))...)
+				p.client = &client
+			case *chatProvider:
+				client := openai.NewClient(append(p.client.Options, option.WithHTTPClient(httpClient))...)
+				p.client = &client
+			}
+			_, err := prov.Call(context.Background(), CallRequest{Model: "model", UserPrompt: "input"})
+			if err == nil || attempts != 1 {
+				t.Fatalf("Call error = %v, attempts = %d; want failure after one attempt", err, attempts)
+			}
+		})
 	}
 }
 
