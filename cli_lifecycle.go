@@ -34,13 +34,22 @@ type executionPipeline struct {
 	stdout io.Writer
 	stderr io.Writer
 
+	stdinIsInteractive func() bool
+
 	flags      *flags
 	cfg        *config.Config
 	runCommand func(context.Context, *flags, *config.Config, *slog.Logger, commandOutput) error
 }
 
 func newExecutionPipeline(ctx context.Context, args []string, stdout, stderr io.Writer) *executionPipeline {
-	return &executionPipeline{ctx: ctx, args: args, stdout: stdout, stderr: stderr, runCommand: runWithOutput}
+	return &executionPipeline{
+		ctx:                ctx,
+		args:               args,
+		stdout:             stdout,
+		stderr:             stderr,
+		stdinIsInteractive: func() bool { return isInteractiveTerminal(os.Stdin, term.IsTerminal) },
+		runCommand:         runWithOutput,
+	}
 }
 
 func main() {
@@ -84,6 +93,12 @@ func (p *executionPipeline) run() int {
 func (p *executionPipeline) metadata() *executionStatus {
 	p.args = rootArgs(p.args, isStdinPiped())
 	if len(p.args) == 0 {
+		// Bare invocation: interactive terminals show help; every other
+		// non-input run fails with an input-required error instead of
+		// attempting a provider call.
+		if !p.stdinIsInteractive() {
+			return &executionStatus{code: 1, err: fmt.Errorf("input required: pass text, use --file <path>, or pipe stdin")}
+		}
 		printUsageTo(p.stderr)
 		return &executionStatus{}
 	}
@@ -124,51 +139,14 @@ func (p *executionPipeline) configure() *executionStatus {
 }
 
 func (p *executionPipeline) routeLocalCommand() *executionStatus {
-	switch p.flags.command {
-	case commandBrowse:
-		if err := validateBrowseTerminal(
-			isInteractiveTerminal(os.Stdin, term.IsTerminal),
-			isInteractiveTerminal(os.Stderr, term.IsTerminal),
-		); err != nil {
-			return &executionStatus{code: 1, err: err}
-		}
-		return commandStatus(showFinder(p.cfg, commandOutput{stdout: p.stdout, stderr: p.stderr}))
-	case commandConfigure:
-		if !isInteractiveTerminal(os.Stdin, term.IsTerminal) || !isInteractiveTerminal(os.Stdout, term.IsTerminal) {
-			printConfig(p.stdout, p.cfg)
-			return &executionStatus{}
-		}
-		service, err := newModelCatalogService()
-		if err != nil {
-			return commandStatus(err)
-		}
-		catalog, _, err := service.loadOrFetch(p.ctx, p.cfg)
-		if err != nil {
-			useEmbedded, confirmErr := confirmEmbeddedModelCatalog(err)
-			if confirmErr != nil {
-				return commandStatus(confirmErr)
-			}
-			if !useEmbedded {
-				return commandStatus(err)
-			}
-		}
-		return commandStatus(RunConfigForm(p.cfg, catalogModelChoices(catalog)))
-	case commandModels:
-		service, err := newModelCatalogService()
-		if err != nil {
-			return commandStatus(err)
-		}
-		catalog, err := service.refresh(p.ctx, p.cfg)
-		if err != nil {
-			return commandStatus(err)
-		}
-		printModelCatalog(p.stdout, catalog)
-		return &executionStatus{}
-	case commandPrompts:
-		return commandStatus(runPromptMaintenance(p.stdout, p.cfg.PromptsDir, p.flags.promptAction, p.flags.dryRun))
-	default:
+	if p.flags.command != commandConfig {
 		return nil
 	}
+	if !isInteractiveTerminal(os.Stdin, term.IsTerminal) || !isInteractiveTerminal(os.Stdout, term.IsTerminal) {
+		printConfig(p.stdout, p.cfg)
+		return &executionStatus{}
+	}
+	return commandStatus(RunConfigForm(p.cfg))
 }
 
 func (p *executionPipeline) validate() *executionStatus {
@@ -198,7 +176,7 @@ func commandStatus(err error) *executionStatus {
 
 func commandRequiresInput(command string) bool {
 	switch command {
-	case commandRefine, commandCritique, commandApply, commandRewrite, commandImage:
+	case commandRefine, commandImage:
 		return true
 	default:
 		return false

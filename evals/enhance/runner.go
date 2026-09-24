@@ -476,6 +476,9 @@ var fixtureLLMValueFlags = map[string]bool{
 	"o":        true,
 }
 
+// fixtureImageValueFlags lists the image operation's value flags. Fixtures may
+// not use them, but the flag-parity test compares this set against every value
+// flag registered by the CLI, so it must track the --image grammar.
 var fixtureImageValueFlags = map[string]bool{
 	"file":       true,
 	"f":          true,
@@ -491,7 +494,7 @@ var fixtureImageValueFlags = map[string]bool{
 // the evaluator-owned dry-run guard. A value-taking flag consumes its next
 // token even when that token is "--"; only a genuine boundary ends scanning.
 func fixtureSetsDryRun(args []string) bool {
-	commandIndex, command := fixtureCommand(args)
+	commandIndex, _ := fixtureCommand(args)
 	if commandIndex < 0 {
 		return false
 	}
@@ -505,36 +508,25 @@ func fixtureSetsDryRun(args []string) bool {
 			return true
 		}
 		flagName, _, hasInlineValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
-		if !hasInlineValue && fixtureFlagTakesValue(command, flagName) {
+		if !hasInlineValue && fixtureFlagTakesValue(flagName) {
 			i++
 		}
 	}
 	return false
 }
 
+// fixtureCommand recognizes the only operation the evaluator permits.
 func fixtureCommand(args []string) (int, string) {
 	for i, arg := range args {
-		switch arg {
-		case "refine", "critique", "rewrite", "apply", "image", "browse", "configure", "models":
+		if arg == "refine" {
 			return i, arg
 		}
 	}
 	return -1, ""
 }
 
-func fixtureFlagTakesValue(command, name string) bool {
-	switch command {
-	case "refine":
-		return fixtureLLMValueFlags[name] || name == "style" || name == "s"
-	case "critique", "apply":
-		return fixtureLLMValueFlags[name]
-	case "rewrite":
-		return fixtureLLMValueFlags[name] || name == "mode"
-	case "image":
-		return fixtureImageValueFlags[name]
-	default:
-		return false
-	}
+func fixtureFlagTakesValue(name string) bool {
+	return fixtureLLMValueFlags[name] || name == "style" || name == "s"
 }
 
 func readCompleted(path string) (map[string]bool, error) {
@@ -723,8 +715,8 @@ func (b *limitedBuffer) Bytes() []byte {
 
 func parseEffectiveSettings(stderr []byte) (map[string]string, error) {
 	allowed := map[string]bool{
-		"Provider": true, "Model": true, "Command": true, "Mode": true,
-		"Prompt": true, "Style": true, "Stream": true, "Timeout": true,
+		"Provider": true, "Model": true, "Command": true,
+		"Style": true, "Stream": true, "Timeout": true,
 		"Max output tokens": true, "Effort": true, "System prompt bytes": true,
 		"Input bytes": true, "Base URL": true, "Credential source": true,
 		"Project ID": true, "Location": true, "Max retries": true,

@@ -13,43 +13,31 @@ import (
 )
 
 func printUsageTo(w io.Writer) {
-	fmt.Fprint(w, `Usage: prompter <command> [flags]
+	fmt.Fprint(w, `Usage: prompter [flags] [input]
 
-Transforms prompts, applies prompt templates, and builds offline image prompts.
+Turns rough prompt material into production-grade AI prompts.
 
-Commands:
-  refine [input]              Improve a rough prompt
-  critique [input]            Analyze a prompt without rewriting it
-  rewrite [input]             Restructure rough Markdown or documentation
-  apply <prompt-name> [input] Apply a catalog prompt
-  browse                      Open the interactive prompt browser
-  image <subject>             Build an image-generation prompt offline
-  configure                   Configure prompter or print resolved settings
-  models refresh              Refresh model choices from Models.dev, OpenRouter, and local OMLX
-  prompts status|upgrade      Inspect or safely upgrade starter prompts
+Operations:
+  (default) | refine [input]  Improve rough prompt input with the active LLM provider
+  --image [subject]           Build an image-generation prompt offline from local components
+  --config                    Configure prompter, or print resolved settings when output is redirected
 
 Global flags:
   -h, --help                 Show this help
   -V, --version              Show version and build information
 
-Run "prompter <command> --help" for command-specific flags.
+Run "prompter refine --help", "prompter --image --help", or "prompter --config --help" for operation-specific flags.
 `)
 }
 
 func printCommandUsageTo(w io.Writer, cmd string) {
 	switch cmd {
 	case commandRefine:
-		fmt.Fprintf(w, "Usage: prompter refine [flags] [input]\n\nImproves rough prompt input.\n\n  -s, --style <name>  Style: %s\n%s", strings.Join(availableStyles(), ", "), llmFlagHelp())
-	case commandApply:
-		fmt.Fprintf(w, "Usage: prompter apply [flags] <prompt-name> [input]\n\nApplies an exact catalog prompt name or alias to input from args, --file, or stdin.\n%s", llmFlagHelp())
-	case commandCritique:
-		fmt.Fprintf(w, "Usage: prompter critique [flags] [input]\n\nAnalyzes flaws and missing constraints without rewriting.\n%s", llmFlagHelp())
-	case commandRewrite:
-		fmt.Fprintf(w, "Usage: prompter rewrite [flags] [input]\n\nRestructures rough Markdown or documentation.\n\n  --mode <name>  Mode: %s\n%s", strings.Join(availableRewriteModes(), ", "), llmFlagHelp())
+		fmt.Fprintf(w, "Usage: prompter refine [flags] [input]\n\nImproves rough prompt input. The bare form \"prompter [input]\" and piped input run the same operation.\n\n  -s, --style <name>  Style: %s\n%s", strings.Join(availableStyles(), ", "), llmFlagHelp())
 	case commandImage:
-		fmt.Fprint(w, `Usage: prompter image [flags] <subject>
+		fmt.Fprint(w, `Usage: prompter --image [flags] [subject]
 
-Builds an image-generation prompt from local components. This command is offline and does not generate an image.
+Builds an image-generation prompt from local components. This operation is offline and does not generate an image.
 
 Flags:
       --profile <name>    Profile: default, minimal, maximal
@@ -63,14 +51,8 @@ Flags:
   -o, --output <path>     Write output to a file and stdout
   -c, --copy              Copy output to the clipboard
 `)
-	case commandBrowse:
-		fmt.Fprint(w, "Usage: prompter browse\n\nOpens the interactive local prompt browser.\n")
-	case commandConfigure:
-		fmt.Fprint(w, "Usage: prompter configure\n\nOpens the configuration wizard on a terminal, or prints resolved non-secret settings when output is redirected.\n")
-	case commandModels:
-		fmt.Fprint(w, "Usage: prompter models refresh\n\nRefreshes cached model choices from Models.dev, OpenRouter, and the local OMLX server.\n")
-	case commandPrompts:
-		fmt.Fprint(w, "Usage: prompter prompts status\n       prompter prompts upgrade [--dry-run]\n\nInspects starter prompts, installs missing files, and stages versioned replacements without overwriting existing files.\n")
+	case commandConfig:
+		fmt.Fprint(w, "Usage: prompter --config\n\nOpens the configuration wizard on a terminal, or prints resolved non-secret settings when output is redirected.\n")
 	default:
 		printUsageTo(w)
 	}
@@ -130,68 +112,9 @@ func printConfig(w io.Writer, cfg *config.Config) {
 	if cfg.PromptFile != "" {
 		fmt.Fprintf(w, "Prompt File:       %s\n", cfg.PromptFile)
 	}
-	if cfg.PromptsDir != "" {
-		fmt.Fprintf(w, "Prompts Dir:       %s\n", cfg.PromptsDir)
-	}
-	if len(cfg.PromptsDirs) > 0 {
-		fmt.Fprintf(w, "Prompts Dirs:      %s\n", strings.Join(cfg.PromptsDirs, ", "))
-	}
 	if cfg.ComponentsFile != "" {
 		fmt.Fprintf(w, "Components File:   %s\n", cfg.ComponentsFile)
 	}
-}
-
-func printStyles(w io.Writer) {
-	fmt.Fprintln(w, "Enhancement Styles (-s, --style)")
-	descriptions := map[string]string{
-		"default":  "standard comprehensive enhancement",
-		"code":     "technical programming prompts",
-		"concise":  "compact prompts without fluff",
-		"creative": "imaginative and exploratory prompts",
-		"spec":     "formal specifications and acceptance criteria",
-	}
-	for _, style := range availableStyles() {
-		description := descriptions[style]
-		if description == "" {
-			description = "custom user style"
-		}
-		fmt.Fprintf(w, "  %-10s %s\n", style, description)
-	}
-	fmt.Fprintln(w, "\nRewrite Modes (--mode)")
-	descriptions = map[string]string{
-		"clean":     "remove cruft and organize markdown",
-		"academic":  "formal scholarly format",
-		"blog":      "readable editorial format",
-		"code":      "extract code, commands, and workflows",
-		"extract":   "extract key facts and action items",
-		"synthesis": "combine notes into a cohesive summary",
-	}
-	for _, mode := range availableRewriteModes() {
-		fmt.Fprintf(w, "  %-10s %s\n", mode, descriptions[mode])
-	}
-}
-
-func printProviders(w io.Writer, cfg *config.Config) {
-	fmt.Fprintln(w, "Supported LLM Providers")
-	fmt.Fprintf(w, "  %-14s %-25s %-12s %s\n", "PROVIDER", "DEFAULT MODEL", "STATUS", "BASE URL")
-	for _, name := range provider.KnownNames() {
-		pCfg := cfg.Providers[name]
-		status := "not set"
-		switch {
-		case pCfg.APIKey != "":
-			status = "configured"
-		case name == "gemini":
-			status = "ADC/unchecked"
-		case name == "omlx":
-			status = "local/ready"
-		}
-		displayName := name
-		if name == cfg.Provider {
-			displayName += " *"
-		}
-		fmt.Fprintf(w, "  %-14s %-25s %-12s %s\n", displayName, pCfg.Model, status, redactURLUserinfo(pCfg.BaseURL))
-	}
-	fmt.Fprintln(w, "\n  * = active provider in config")
 }
 
 func redactURLUserinfo(raw string) string {

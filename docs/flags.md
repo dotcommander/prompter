@@ -1,117 +1,113 @@
-# CLI Flags Reference
+# CLI flags
 
-Purpose: canonical reference for all command-line flags.
+Prompter has three operations: enrichment (the default, also available as the `refine` command word), offline image assembly (`--image`), and configuration (`--config`). Only one operation runs per invocation.
+
+| Operation | How to invoke it | Reads input | Uses the network | What it outputs |
+| --- | --- | --- | --- | --- |
+| Enrichment (default) | `prompter [input]`, `prompter refine [input]`, or piped stdin | Positional text, `--file`, or stdin | Yes (provider call) | The enriched prompt on stdout |
+| Image assembly | `prompter --image [subject]` | Positional subject or `--file` | No (offline) | The assembled prompt text on stdout |
+| Configuration | `prompter --config` | None (positional input is rejected) | No | The configuration form on a TTY; resolved settings when redirected |
 
 ## Global flags
 
-Only `-h`/`--help` and `-V`/`--version` are global. All other flags belong to a command.
+| Flag | Meaning |
+| --- | --- |
+| `-h`, `--help` | Show help. With an operation (`prompter --image --help`), shows that operation's flags. |
+| `-V`, `--version` | Show version and build information. |
 
-## LLM command flags
+## Enrichment flags
 
-`refine`, `critique`, `rewrite`, and `apply` accept:
+`refine` is the only command word; `prompter "rough prompt"` is equivalent to `prompter refine "rough prompt"`.
+
+### Provider flags
 
 | Flag | Alias | Description | Default |
-|------|-------|-------------|---------|
-| `--provider` | `-p` | Provider to use | Configured provider (built-in `gemini`) |
-| `--model` | `-m` | Provider-specific model override | Provider default |
-| `--base-url` | | Custom API endpoint override | Provider default |
-| `--file` | `-f` | Read input from a file | unset |
-| `--output` | `-o` | Write output to a file and stdout | unset |
-| `--copy` | `-c` | Copy buffered output to the clipboard | `false` |
-| `--dry-run` | | Show resolved settings without an API call | `false` |
-| `--stream` | | Stream tokens to stdout | `false` |
-| `--verbose` | `-v` | Show timing output on stderr | `false` |
+| --- | --- | --- | --- |
+| `--provider PROVIDER` | `-p` | Provider name: `gemini`, `openai`, `cerebras`, `deepseek`, `groq`, `omlx`, `openrouter`, or `zai`. | Configured provider (`gemini` on first use) |
+| `--model MODEL` | `-m` | Model override for this call. | Configured provider model |
+| `--base-url URL` | — | Provider endpoint override for this call. | Configured provider endpoint |
 
-`refine` alone accepts `-s`/`--style`. `rewrite` alone accepts `--mode`.
+The provider determines which credentials and environment variables are read; see [Providers](providers.md).
 
-## Image command flags
+### Style flags
 
-`image` accepts `--profile`, `--count`, `--categories`, `--no-artist`, `--no-platform`, `--json`, `--seed`, `--file`, `--output`, and `--copy`. It does not accept provider or model flags because it runs offline.
-Category names must exist in the loaded component library and may appear only once;
-unknown or duplicate names fail instead of producing a partial prompt.
+| Flag | Meaning |
+| --- | --- |
+| `-s STYLE` | Short form of `--style`. |
+| `--style STYLE` | Use a named style: `default`, `code`, `concise`, `creative`, or `spec`. User overrides live in `~/.config/prompter/styles/<name>.md`. |
 
-## Prompt maintenance flags
+### Input and output handling
 
-`prompts upgrade` accepts `--dry-run` to preview missing prompt installation and
-versioned replacement candidates without writing them. `prompts status` does not
-accept `--dry-run` because status is already read-only.
+| Flag | Meaning |
+| --- | --- |
+| `-f, --file PATH` | Read input from `PATH` instead of positional text or stdin. |
+| `-o, --output FILE` | Also write the result to `FILE`; stdout still receives it. |
+| `-c, --copy` | Copy the result to the system clipboard. |
+| `--stream` | Stream tokens to stdout as they arrive. Incompatible with `--output` and `--copy`. |
+| `--dry-run` | Print resolved settings to stderr and exit 0 without calling the provider. |
+| `-v, --verbose` | Print timing diagnostics to stderr. |
 
-## Usage examples
-
-```bash
-# Run a catalog prompt by exact name or alias with piped input
-defuddle parse -m "$url" | prompter apply system-architect > plan.md
-
-# Use OpenAI
-prompter refine -p openai "explain this code"
-
-# Use local OMLX
-prompter refine -p omlx -m Ornith-1.5-35B-A3B-oQ4e-mtp "explain this code"
-
-# Specify model
-prompter refine -m gpt-5.6-luna "my prompt"
-
-# Provider + model
-prompter refine -p openai -m gpt-5.6-luna "my prompt"
-
-# Override base URL
-prompter refine --base-url https://api.example.com "my prompt"
-
-# Pick an enhancement style
-prompter refine -s code "write a retry loop"
-prompter refine --style concise "summarize this"
-prompter refine -s spec "add OAuth login with refresh token rotation"
-
-# Read input from a file
-prompter refine -f draft-prompt.txt
-
-# Write the generated prompt to a file and stdout
-prompter refine "write a release checklist" -o prompt.txt
-
-# Copy the result to clipboard
-prompter refine --copy "write a release checklist"
-
-# Build offline image prompts
-prompter image "desert observatory"
-prompter image "portrait of a clockmaker" --profile minimal
-prompter image "futurist tram" --categories quality,composition --json
-
-# Preview starter prompt maintenance
-prompter prompts upgrade --dry-run
-```
-
-`--output` writes the response to the specified file while simultaneously emitting it to `stdout` (dual-sink). Standard shell redirection (`> prompt.txt`) directs stdout exclusively to the file. `--output` is for non-streamed responses and cannot be combined with `--stream`.
-
-OMLX supports streaming through its OpenAI-compatible endpoint.
+### Examples
 
 ```bash
-# Check resolved provider/model/output budget/input without an API call
-prompter refine --dry-run -s spec -f draft-prompt.txt
-
-# Stream tokens as they are generated
-prompter refine --stream "write a haiku about goroutines"
-
-# Show timing
-prompter refine -v "my prompt"
+prompter refine -p groq 'explain quantum computing simply'
+prompter refine -m gpt-5.6-luna 'improve these notes'
+prompter refine --base-url https://api.openai.com/v1 -p openai 'improve these notes'
+prompter refine -v 'improve these notes'
+prompter refine -s concise 'improve these notes'
+prompter refine --style spec 'improve these notes'
+printf 'rough prompt' | prompter refine --stream
+prompter 'explain quantum computing simply' --dry-run
+prompter refine --file notes.md --output improved.md
+GOWORK=off go run . --image 'desert observatory' --profile minimal
 ```
 
-Dry-run output includes the resolved maximum output-token budget. It does not make
-a provider request.
+## Operation-specific flags
 
-If a provider stops without a successful completion terminal state, including
-because it reached its output-token limit, Prompter exits nonzero. A streamed call
-may already have written partial text; discard that output on any nonzero exit.
+`--image` accepts:
 
-## Configuration
+| Flag | Meaning |
+| --- | --- |
+| `--profile NAME` | Component profile: `default`, `minimal`, or `maximal`. |
+| `--count N` | Number of variations to assemble (default 1). |
+| `--categories LIST` | Comma-separated modifier categories to include. |
+| `--no-artist` | Omit artist references. |
+| `--no-platform` | Omit platform references. |
+| `--json` | Emit the assembled result as JSON. |
+| `--seed VALUE` | Deterministic selection seed. |
+| `-f, --file PATH` | Read the subject from `PATH`. |
+| `-o, --output FILE` | Also write output to `FILE`. |
+| `-c, --copy` | Copy output to the clipboard. |
 
-Default values can be set in `~/.config/prompter/config.json`. CLI flags always override config values.
+`--image` example patterns:
 
-`components_file` points to the JSON component library used by `image`. When the file is missing, Prompter uses its embedded default components.
+```bash
+prompter --image "portrait of a clockmaker" --profile minimal
+prompter --image "portrait of a clockmaker" --count 2 --json
+prompter --image "moon castle" --categories quality,composition --seed 7
+```
 
-`default_copy` copies every non-streamed generated or image-prompt result to the
-clipboard. Streaming rejects copying because streamed output is not buffered.
+`--config` takes no flags. Positional input with `--config` is a usage error. On an interactive terminal it opens the configuration form; with redirected output it prints the resolved non-secret configuration, including the active provider and model. See [Configuration](../README.md#configuration-and-local-state) for the config file location.
 
-## Related docs
+## Retired operations
 
-- `common-tasks.md`
-- `setup.md`
+The `critique`, `rewrite`, `apply`, `browse`, `models refresh`, and `prompts status|upgrade` operations are removed, as are the old `image` and `configure` command words. Typing one returns a migration error with exit code 2 and does not contact a provider. `--limit N` and similar retired flags are likewise rejected as undefined. Use `--image` and `--config` for their replacements; `refine` remains for enrichment.
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success (including `--dry-run` and help/version output). |
+| `1` | Runtime or input failure. |
+| `2` | Usage failure: unknown flag, operation collision, or retired command. |
+| `130` | Canceled with SIGINT. |
+
+## Configuration precedence
+
+Settings resolve in this order:
+
+```text
+CLI flags > environment variables > ~/.config/prompter/config.json > defaults
+```
+
+Run `prompter --config` with redirected output to print the resolved configuration, or run it on a terminal to change settings interactively.

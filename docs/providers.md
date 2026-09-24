@@ -76,12 +76,10 @@ Built-in model defaults:
 - `gemini`: `gemini-3.7-flash`
 - `omlx`: `Ornith-1.5-35B-A3B-oQ4e-mtp`
 
-`prompter models refresh` fetches Models.dev metadata and caches up to five
-eligible choices per provider. Models with output pricing at or above $15 per
-million tokens are excluded for all providers except Cerebras and Groq; choices
-at or below $5 are preferred. OpenRouter is ranked by OpenRouter's official [`sort=top-weekly`](https://openrouter.ai/docs/api/api-reference/models/list-all-models-and-their-properties)
-order before those price rules are applied. OMLX choices come from the configured local `/v1/models`
-endpoint when it is available.
+Set a model explicitly in provider configuration or with `--model` during enrichment.
+`prompter --config` presents local model choices in interactive mode; it does not
+fetch model catalogs. The OMLX provider uses the configured local server endpoint
+when invoked.
 
 `omlx` targets the local MLX server on localhost:8000:
 

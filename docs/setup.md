@@ -1,62 +1,59 @@
 # Setup
 
-Build Prompter from this checkout, confirm the offline path, then configure a provider only when you need remote prompt operations.
+## Prerequisites
 
-## First check: offline image prompt
+- Go 1.26 or newer (the module declares `go 1.26.3`).
+- A terminal for interactive forms.
 
-**Prerequisite:** this module declares Go `1.26.3`. Run the command from the repository root; `GOWORK=off` selects this module rather than a parent Go workspace.
+## Build from a checkout
 
-```bash
-GOWORK=off go run . image "desert observatory" --profile minimal
-```
-
-It prints an assembled image-generation prompt. The image command loads a local component library and builds text; it does not make a provider request or generate an image.
-
-Source-checked, unexecuted variation: add `--json` to produce a JSON object for the default single result.
-
-```bash
-GOWORK=off go run . image "desert observatory" --json
-```
-
-## Build a local binary
-
-Source-checked, unexecuted for this documentation task:
+From the repository root:
 
 ```bash
 GOWORK=off go build -o prompter .
 ```
 
-This creates `./prompter`. Use `./prompter --help` to list commands before making a remote request.
+`GOWORK=off` selects this module instead of a parent Go workspace. The build writes a local `prompter` binary.
 
-## Configure a remote provider
-
-Remote `refine`, `critique`, `rewrite`, and `apply` operations need a resolved provider. `prompter configure` opens its form only when standard input and output are interactive terminals. With redirected output, it prints the resolved non-secret configuration instead.
-
-Prompter reads configuration in this order:
-
-```text
-CLI flags > environment variables > ~/.config/prompter/config.json > defaults
-```
-
-The configuration file can hold the provider, model, endpoint, prompt locations, component-library location, timeout, output-token budget, retry count, and buffered-result clipboard preference. See [Providers](providers.md) for supported providers and [CLI flags](flags.md) for command overrides.
-
-## Verify a change
-
-Source-checked, unexecuted for this documentation task:
+## Offline first check
 
 ```bash
-GOWORK=off go build ./...
-GOWORK=off go test -count=1 ./...
-GOWORK=off go test -count=1 ./doctests/...
-GOWORK=off go vet ./...
-gofmt -l .
+GOWORK=off go run . --image "desert observatory" --profile minimal
 ```
 
-The `justfile` provides the same checks through `just qa`; it runs formatting verification, vet, tests, doctests, and a build.
+`--image` builds an image-generation prompt from local components. It performs no network request, so it verifies the build without credentials.
 
-## Related docs
+## Configure remote prompting
 
-- [CLI flags](flags.md)
-- [Prompt files](prompt-files.md)
-- [Providers](providers.md)
-- [Troubleshooting](troubleshooting.md)
+Remote enrichment (`prompter refine` or the default form) requires a configured provider. Open the form:
+
+```bash
+prompter --config
+```
+
+The form runs only when stdin and stdout are interactive terminals; it uses the configured model and local model choices, so opening it makes no network request. With redirected output, `prompter --config` prints the resolved non-secret configuration instead.
+
+Provider-specific environment variables and endpoints are documented in [Providers](providers.md). Gemini uses Google Application Default Credentials plus a project ID by default.
+
+## Verify the installation
+
+```bash
+prompter --version
+prompter refine --dry-run --provider groq
+```
+
+The dry run prints resolved settings to standard error and exits 0 without contacting the provider.
+
+## Verify the repository tests
+
+```bash
+GOWORK=off go test -count=1 . ./doctests/...
+```
+
+The command runs the root package and documentation-consistency tests. See [Contributor guide](change-prompter.md) for the full verification set.
+
+## Next steps
+
+- Operation and flag reference: [CLI flags](flags.md)
+- Automation contracts: [Automation](use-json-output.md)
+- Failure recovery: [Troubleshooting](troubleshooting.md)

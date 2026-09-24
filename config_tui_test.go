@@ -1,10 +1,7 @@
 package main
 
 import (
-	"errors"
-	"io"
-	"os"
-	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -34,135 +31,44 @@ func TestGeminiConfigurationStatusRecognizesPrompterAPIKey(t *testing.T) {
 	}
 }
 
-func TestSaveConfigAndVault_SeedsStarterPromptsWhenEmpty(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+func TestPopularModelsFor(t *testing.T) {
+	t.Parallel()
 
-	promptsDir := filepath.Join(home, ".config", "prompter", "prompts.d")
-	cfg := &config.Config{
-		Provider:   "gemini",
-		PromptsDir: promptsDir,
-		Providers:  config.DefaultProviders(),
+	want := map[string][]string{
+		"gemini":     {"gemini-3.7-flash"},
+		"openai":     {"gpt-5.6-luna"},
+		"groq":       {"qwen/qwen3.8-27b", "qwen/qwen3.6-27b"},
+		"cerebras":   {"gpt-oss-120b", "gemma-4-31b"},
+		"deepseek":   {"deepseek-v4.1-flash", "deepseek-v4.1-flash", "deepseek-v4.1-flash-vision-exp"},
+		"openrouter": {"openrouter/free", "anthropic/claude-sonnet-5", "meta-llama/llama-3.3-70b-instruct"},
+		"zai":        {"glm-5.3-flash", "glm-5.3"},
+		"omlx":       {"Ornith-1.5-35B-A3B-oQ4e-mtp", "Qwen2.5-Coder-7B-Instruct-4bit", "Llama-3.2-3B-Instruct-4bit"},
 	}
 
-	if err := saveConfigAndVault(cfg); err != nil {
-		t.Fatalf("saveConfigAndVault: %v", err)
-	}
-
-	// Verify config.json was created
-	configFile := filepath.Join(home, ".config", "prompter", "config.json")
-	if _, err := os.Stat(configFile); err != nil {
-		t.Fatalf("config.json was not created: %v", err)
-	}
-
-	// Verify starter prompts were seeded
-	expectedFiles := []string{
-		"enhance.md",
-		"critique.md",
-		"rewrite.md",
-		"refactor.md",
-		"code-review.md",
-		"system-architect.md",
-		"git-commit.md",
-		"unit-test.md",
-	}
-	for _, name := range expectedFiles {
-		p := filepath.Join(promptsDir, name)
-		data, err := os.ReadFile(p)
-		if err != nil {
-			t.Errorf("expected starter prompt %s: %v", name, err)
+	for p, wantModels := range want {
+		models := popularModelsFor(p)
+		if len(models) != len(wantModels) {
+			t.Errorf("popularModelsFor(%q) returned %d models, want %d", p, len(models), len(wantModels))
 			continue
 		}
-		if len(data) == 0 {
-			t.Errorf("starter prompt %s is empty", name)
+		for i, m := range models {
+			if m.id == "" || m.label == "" {
+				t.Errorf("popularModelsFor(%q) returned invalid model: %+v", p, m)
+			}
+			if m.id != wantModels[i] {
+				t.Errorf("popularModelsFor(%q)[%d].id = %q, want %q", p, i, m.id, wantModels[i])
+			}
 		}
 	}
-}
 
-func TestSaveConfigAndVault_PreservesExistingPrompts(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-
-	promptsDir := filepath.Join(home, ".config", "prompter", "prompts.d")
-	if err := os.MkdirAll(promptsDir, 0o755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
+	// Unknown provider should return nil
+	if unknown := popularModelsFor("unknown-prov"); unknown != nil {
+		t.Errorf("popularModelsFor(unknown-prov) = %v, want nil", unknown)
 	}
-
-	refactorPath := filepath.Join(promptsDir, "refactor.md")
-	customContent := []byte("custom prompt content\n")
-	if err := os.WriteFile(refactorPath, customContent, 0o644); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
-
-	cfg := &config.Config{
-		Provider:   "gemini",
-		PromptsDir: promptsDir,
-		Providers:  config.DefaultProviders(),
-	}
-
-	if err := saveConfigAndVault(cfg); err != nil {
-		t.Fatalf("saveConfigAndVault: %v", err)
-	}
-
-	got, err := os.ReadFile(refactorPath)
-	if err != nil {
-		t.Fatalf("ReadFile: %v", err)
-	}
-	if string(got) != string(customContent) {
-		t.Errorf("existing prompt was overwritten, got %q, want %q", string(got), string(customContent))
-	}
-}
-
-func TestEnsurePromptVaultStrictPropagatesSeedFailure(t *testing.T) {
-	t.Parallel()
-
-	promptsDir := filepath.Join(t.TempDir(), "prompts")
-	cfg := &config.Config{PromptsDir: promptsDir, PromptsDirs: []string{promptsDir}}
-	wantErr := errors.New("seed failed")
-	initFn := func(io.Writer, io.Writer, *config.Config, string) error {
-		return wantErr
-	}
-
-	_, _, err := ensurePromptVaultWithInit(cfg, true, initFn)
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("ensurePromptVaultWithInit error = %v, want wrapped %v", err, wantErr)
-	}
-}
-
-func TestEnsurePromptVaultStrictResumesPartialSeed(t *testing.T) {
-	t.Parallel()
-
-	promptsDir := filepath.Join(t.TempDir(), "prompts")
-	cfg := &config.Config{PromptsDir: promptsDir, PromptsDirs: []string{promptsDir}}
-	wantErr := errors.New("interrupted seed")
-	partialInit := func(io.Writer, io.Writer, *config.Config, string) error {
-		if err := os.MkdirAll(promptsDir, 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(promptsDir, "enhance.md"), []byte("custom partial\n"), 0o644); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(promptsDir, promptInitMarker), nil, 0o600); err != nil {
-			return err
-		}
-		return wantErr
-	}
-	if _, _, err := ensurePromptVaultWithInit(cfg, true, partialInit); !errors.Is(err, wantErr) {
-		t.Fatalf("partial seed error = %v, want wrapped %v", err, wantErr)
-	}
-
-	entries, _, err := ensurePromptVaultWithInit(cfg, true, runInit)
-	if err != nil {
-		t.Fatalf("resume seed: %v", err)
-	}
-	if len(entries) != 8 {
-		t.Fatalf("resumed prompt count = %d, want 8", len(entries))
-	}
-	data, err := os.ReadFile(filepath.Join(promptsDir, "enhance.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) != "custom partial\n" {
-		t.Fatalf("partial prompt was overwritten: %q", data)
+	if got, want := popularModelsFor("zai"), []modelChoice{
+		{"glm-5.3-flash", "glm-5.3-flash (Default / High Speed)"},
+		{"glm-5.3", "glm-5.3 (Latest Flagship)"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Errorf("popularModelsFor(\"zai\") = %#v, want %#v", got, want)
 	}
 }

@@ -1,39 +1,68 @@
 # Common tasks
 
-Use Prompter in a shell pipeline while keeping generated text on standard output and diagnostics on standard error.
+Every task here uses one of the three operations: enrichment (`refine` or the default form), offline image assembly (`--image`), or configuration (`--config`).
 
-## Refine piped input
-
-**Prerequisite:** configure the provider you intend to use before sending remote input. The example is source-checked but unexecuted because it can call that provider.
+## Improve a rough prompt
 
 ```bash
-printf '%s\n' 'Turn these notes into a release checklist.' | prompter refine
+prompter refine "write release notes from these bullets"
 ```
 
-On success, the refined prompt is written to standard output. When standard input is piped and no command is supplied, Prompter also defaults to `refine`; the explicit command above makes a script's intent visible.
-
-A successful exit is `0`. If the command exits nonzero, discard captured output: a streamed response can already contain partial text.
-
-## Save a catalog-prompt result
-
-**Prerequisite:** `apply` needs a prompt file whose name or alias matches `system-architect`. The following source-checked example can call the configured provider.
+Pass a file instead:
 
 ```bash
-printf '%s\n' 'Design a rate limiter.' | prompter apply system-architect > architecture.md
+prompter refine --file notes.md
 ```
 
-The selected prompt body's text becomes the system prompt, and the generated result is redirected to `architecture.md`. Use [Prompt files](prompt-files.md) to create or locate the catalog entry.
-
-## Keep diagnostics separate
+## Preview settings before calling a provider
 
 ```bash
-prompter refine -v "write release notes" 1>enhanced.txt 2>debug.log
+prompter refine --dry-run
 ```
 
-This source-checked, unexecuted example sends generated text to `enhanced.txt` and verbose timing to `debug.log`. The `-v` flag writes timing to standard error, so it does not contaminate the generated output.
+The dry run prints the resolved provider, model, base URL, credential source, style, and limits to standard error, then exits 0. No request is sent.
 
-## Related docs
+## Pipe input through refinement
 
-- [CLI flags](flags.md)
-- [Automation](use-json-output.md)
-- [Prompt files](prompt-files.md)
+```bash
+printf 'rough prompt' | prompter
+printf 'rough prompt' | prompter refine --stream
+```
+
+Piped input without an operation runs enrichment, exactly like `prompter refine`.
+
+## Assemble an image prompt offline
+
+```bash
+prompter --image "desert observatory" --profile minimal
+prompter --image "moon castle" --count 2 --json
+```
+
+`--image` builds prompt text from local components. It makes no network request and does not generate an image.
+
+## Show or change configuration
+
+```bash
+prompter --config            # interactive form on a TTY
+prompter --config > cfg.txt  # redirected: prints resolved non-secret settings
+```
+
+## Save output to a file
+
+```bash
+prompter refine --file notes.md --output improved.md
+```
+
+## Check the resolved configuration in a script
+
+```bash
+prompter --config | grep -- '--config'
+```
+
+Redirected `--config` output is plain text, so it can be filtered without JSON parsing.
+
+## Related pages
+
+- Flag reference: [CLI flags](flags.md)
+- Provider selection and credentials: [Providers](providers.md)
+- Scripting contracts: [Automation](use-json-output.md)

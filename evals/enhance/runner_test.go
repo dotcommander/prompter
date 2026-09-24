@@ -205,7 +205,10 @@ func TestFixtureValueFlagsMatchCLI(t *testing.T) {
 		return true
 	})
 
-	want := make(map[string]bool, len(fixtureLLMValueFlags)+len(fixtureImageValueFlags)+3)
+	// The CLI still registers the image operation's value flags, so the
+	// evaluator's parity map must track them even though only refine fixtures
+	// are permitted.
+	want := make(map[string]bool, len(fixtureLLMValueFlags)+len(fixtureImageValueFlags)+2)
 	for name := range fixtureLLMValueFlags {
 		want[name] = true
 	}
@@ -214,7 +217,6 @@ func TestFixtureValueFlagsMatchCLI(t *testing.T) {
 	}
 	want["style"] = true
 	want["s"] = true
-	want["mode"] = true
 	if !reflect.DeepEqual(current, want) {
 		t.Fatalf("CLI value flags = %v, evaluator grammar = %v", current, want)
 	}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -151,30 +150,26 @@ func (s *Spinner) Stop() time.Duration {
 // -----------------------------------------------------------------------------
 
 type flags struct {
-	provider         string
-	model            string
-	baseURL          string
-	verbose          bool
-	stream           bool
-	dryRun           bool
-	copy             bool
-	file             string
-	output           string
-	style            string
-	styleSet         bool
-	profile          string
-	count            int
-	json             bool
-	noArtist         bool
-	noPlatform       bool
-	categories       string
-	seed             string
-	rewriteMode      string
-	promptAction     string
-	command          string
-	promptName       string
-	outputValidation *OutputValidation
-	args             []string
+	provider   string
+	model      string
+	baseURL    string
+	verbose    bool
+	stream     bool
+	dryRun     bool
+	copy       bool
+	file       string
+	output     string
+	style      string
+	styleSet   bool
+	profile    string
+	count      int
+	json       bool
+	noArtist   bool
+	noPlatform bool
+	categories string
+	seed       string
+	command    string
+	args       []string
 }
 
 func parseArgs(args []string) (*flags, error) {
@@ -182,29 +177,24 @@ func parseArgs(args []string) (*flags, error) {
 }
 
 func parseArgsTo(args []string, stderr io.Writer) (*flags, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("command required")
-	}
-	requestedCommand := args[0]
-	command := canonicalCommand(requestedCommand)
-	if !isCommand(command) {
-		return nil, fmt.Errorf("unknown command %q", args[0])
+	command, rest, err := selectOperation(args)
+	if err != nil {
+		return nil, err
 	}
 
 	f := &flags{command: command}
-	args = args[1:]
-	fs := flag.NewFlagSet(f.command, flag.ContinueOnError)
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	if hasHelpFlag(args) {
-		printCommandUsageTo(stderr, f.command)
+	if hasHelpFlag(rest) {
+		printCommandUsageTo(stderr, command)
 		return nil, flag.ErrHelp
 	}
 
 	registerFlags(fs, f)
 
-	args = interspersedFlagArgs(fs, args)
-	if err := fs.Parse(args); err != nil {
+	parsed := interspersedFlagArgs(fs, rest)
+	if err := fs.Parse(parsed); err != nil {
 		return nil, err
 	}
 	fs.Visit(func(visited *flag.Flag) {
@@ -214,38 +204,10 @@ func parseArgsTo(args []string, stderr io.Writer) (*flags, error) {
 	})
 
 	f.args = fs.Args()
-	if f.command == commandApply {
-		if len(f.args) == 0 {
-			return nil, fmt.Errorf("apply requires a prompt name or alias")
-		}
-		f.promptName = f.args[0]
-		f.args = f.args[1:]
-	}
-	if f.command == commandModels {
-		if len(f.args) != 1 || f.args[0] != "refresh" {
-			return nil, fmt.Errorf("models requires the refresh action")
-		}
-	}
-	if f.command == commandPrompts {
-		if len(f.args) != 1 || (f.args[0] != "status" && f.args[0] != "upgrade") {
-			return nil, fmt.Errorf("prompts requires the status or upgrade action")
-		}
-		f.promptAction = f.args[0]
-		if f.dryRun && f.promptAction != "upgrade" {
-			return nil, fmt.Errorf("--dry-run is only valid with prompts upgrade")
-		}
-	}
-	if (f.command == commandBrowse || f.command == commandConfigure) && len(f.args) > 0 {
-		return nil, fmt.Errorf("%s does not accept arguments", f.command)
+	if command == commandConfig && len(f.args) > 0 {
+		return nil, fmt.Errorf("%s does not accept input arguments", configOperationFlag)
 	}
 	return f, nil
-}
-
-func canonicalCommand(command string) string {
-	if command == commandConfigAlias {
-		return commandConfigure
-	}
-	return command
 }
 
 func hasHelpFlag(args []string) bool {
@@ -262,15 +224,10 @@ func hasHelpFlag(args []string) bool {
 
 func registerFlags(fs *flag.FlagSet, f *flags) {
 	switch f.command {
-	case commandRefine, commandCritique, commandRewrite, commandApply:
-		registerLLMFlags(fs, f)
-	}
-	switch f.command {
 	case commandRefine:
+		registerLLMFlags(fs, f)
 		fs.StringVar(&f.style, "style", "", "")
 		fs.StringVar(&f.style, "s", "", "")
-	case commandRewrite:
-		fs.StringVar(&f.rewriteMode, "mode", "clean", "")
 	case commandImage:
 		registerOutputFlags(fs, f)
 		fs.StringVar(&f.profile, "profile", "default", "")
@@ -280,8 +237,8 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 		fs.BoolVar(&f.noPlatform, "no-platform", false, "")
 		fs.StringVar(&f.categories, "categories", "", "")
 		fs.StringVar(&f.seed, "seed", "", "")
-	case commandPrompts:
-		fs.BoolVar(&f.dryRun, "dry-run", false, "")
+	case commandConfig:
+		// --config accepts no operation flags.
 	}
 }
 
@@ -305,15 +262,6 @@ func registerOutputFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.file, "f", "", "")
 	fs.StringVar(&f.output, "output", "", "")
 	fs.StringVar(&f.output, "o", "", "")
-}
-
-func isCommand(value string) bool {
-	switch value {
-	case commandRefine, commandCritique, commandRewrite, commandApply, commandBrowse, commandImage, commandConfigure, commandModels, commandPrompts:
-		return true
-	default:
-		return false
-	}
 }
 
 func readInput(file string, args []string) (string, error) {
@@ -427,9 +375,6 @@ func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger)
 }
 
 func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger, output commandOutput) error {
-	if f.stream && f.outputValidation != nil {
-		return fmt.Errorf("--stream cannot be used with prompt output validation")
-	}
 	if f.stream && f.output != "" {
 		return fmt.Errorf("--output cannot be used with --stream")
 	}
@@ -449,12 +394,6 @@ func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *sl
 	input, err := readInput(f.file, f.args)
 	if err != nil {
 		return err
-	}
-	if f.command == commandRewrite {
-		input = preprocessRewriteInputForMode(input, f.rewriteMode)
-		if strings.TrimSpace(input) == "" {
-			return fmt.Errorf("rewrite preprocessing removed all content; refusing to send an empty request")
-		}
 	}
 
 	modelName := prov.Model()
@@ -489,7 +428,7 @@ func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *sl
 	req := provider.CallRequest{
 		Model:        modelName,
 		SystemPrompt: cfg.SystemPrompt,
-		UserPrompt:   boundPromptInput(f.command, input),
+		UserPrompt:   boundPromptInput(input),
 		Effort:       cfg.Effort,
 	}
 
@@ -520,7 +459,7 @@ func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *sl
 		spinner.Start()
 	}
 
-	result, retried, err := callWithOutputValidation(callCtx, prov, req, input, f.outputValidation)
+	result, err := prov.Call(callCtx, req)
 
 	if spinner != nil {
 		spinner.Stop()
@@ -528,9 +467,6 @@ func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *sl
 
 	if err != nil {
 		return timeoutErr(err)
-	}
-	if retried {
-		logger.Info("output corrected after validation retry", "prompt", f.promptName)
 	}
 
 	if f.output != "" {
@@ -585,15 +521,6 @@ func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags
 		fmt.Fprintf(w, "Location: %s\n", providerConfig.Location)
 	}
 	fmt.Fprintf(w, "Command: %s\n", f.command)
-	if f.command == commandRewrite {
-		fmt.Fprintf(w, "Mode: %s\n", f.rewriteMode)
-	}
-	if f.command == commandApply {
-		fmt.Fprintf(w, "Prompt: %s\n", f.promptName)
-		if f.outputValidation != nil {
-			fmt.Fprintf(w, "Output validation: enabled (%d retry, semantic=%t)\n", f.outputValidation.Retries, f.outputValidation.SemanticValidation)
-		}
-	}
 	if style != "" {
 		fmt.Fprintf(w, "Style: %s\n", style)
 	}
@@ -720,123 +647,25 @@ func singleOrMany(results []*AssembledPrompt) any {
 	return results
 }
 
+// rootArgs applies default-enrichment routing to the raw root invocation.
+// Piped or positional input without an explicit operation enriches by default.
+// Retired command words pass through untouched so argument parsing can return
+// the migration error instead of silently enriching them.
 func rootArgs(args []string, stdinPiped bool) []string {
-	if !stdinPiped {
+	if len(args) == 0 {
+		if stdinPiped {
+			return []string{commandRefine}
+		}
+		return nil
+	}
+	switch args[0] {
+	case commandRefine, imageOperationFlag, configOperationFlag, "--help", "-h", "--version", "-V":
 		return args
 	}
-	if len(args) == 0 {
-		return []string{commandRefine}
+	if isRetiredCommand(args[0]) {
+		return args
 	}
-	if args[0] != "--help" && args[0] != "-h" && args[0] != "--version" && args[0] != "-V" && strings.HasPrefix(args[0], "-") {
-		return append([]string{commandRefine}, args...)
-	}
-	return args
-}
-
-func validateBrowseTerminal(stdinTerminal, stderrTerminal bool) error {
-	if !stdinTerminal || !stderrTerminal {
-		return fmt.Errorf("browse requires interactive stdin and stderr terminals")
-	}
-	return nil
-}
-
-// ensurePromptVault ensures the prompt directory exists, auto-seeding starter prompts if empty.
-func ensurePromptVault(cfg *config.Config) ([]PromptEntry, []string, error) {
-	return ensurePromptVaultWithInit(cfg, false, runInit)
-}
-
-func ensurePromptVaultStrict(cfg *config.Config) ([]PromptEntry, []string, error) {
-	return ensurePromptVaultWithInit(cfg, true, runInit)
-}
-
-func ensurePromptVaultWithInit(cfg *config.Config, strict bool, initFn func(io.Writer, io.Writer, *config.Config, string) error) ([]PromptEntry, []string, error) {
-	dirs, err := promptDirs(cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	primaryDir := ""
-	if len(dirs) > 0 {
-		primaryDir = dirs[0]
-	}
-	if primaryDir == "" {
-		home, _ := os.UserHomeDir()
-		if home != "" {
-			primaryDir = filepath.Join(home, ".config", "prompter", "prompts.d")
-		}
-	}
-
-	if primaryDir != "" {
-		_ = os.MkdirAll(primaryDir, 0o755)
-	}
-
-	var entries []PromptEntry
-	if primaryDir != "" {
-		entries, err = ScanPromptsDir(primaryDir)
-		if err != nil {
-			return nil, nil, fmt.Errorf("scan primary prompt directory: %w", err)
-		}
-	}
-
-	initIncomplete := false
-	if primaryDir != "" {
-		initIncomplete, err = promptInitMarkerPresent(filepath.Join(primaryDir, promptInitMarker))
-		if err != nil {
-			return nil, dirs, fmt.Errorf("inspect prompt initialization marker: %w", err)
-		}
-	}
-	if (len(entries) == 0 || initIncomplete) && primaryDir != "" {
-		// Auto-seed starter prompts on first interactive launch or configure
-		var initOut, initErr bytes.Buffer
-		if initErrVal := initFn(&initOut, &initErr, cfg, primaryDir); initErrVal == nil {
-			fmt.Fprintf(os.Stderr, "Seeded starter prompts in %s\n", primaryDir)
-			entries, err = ScanPromptsDir(primaryDir)
-			if err != nil && strict {
-				return nil, dirs, fmt.Errorf("scan seeded prompt vault: %w", err)
-			}
-		} else if strict {
-			return nil, dirs, fmt.Errorf("seed prompt vault: %w", initErrVal)
-		}
-	}
-
-	secondaryEntries, err := scanPromptDirs(dirs[1:])
-	if err != nil {
-		return nil, nil, fmt.Errorf("scan prompts: %w", err)
-	}
-	entries = append(entries, secondaryEntries...)
-
-	return entries, dirs, nil
-}
-
-// showFinder scans the prompts directory and shows the fuzzy finder.
-func showFinder(cfg *config.Config, output commandOutput) error {
-	entries, dirs, err := ensurePromptVault(cfg)
-	if err != nil {
-		return err
-	}
-
-	if len(entries) == 0 {
-		fmt.Fprintf(output.stderr, "No prompts found in %s. Add a .md prompt file and run 'prompter browse' again.\n", strings.Join(dirs, ", "))
-		return nil
-	}
-
-	selected, err := RunFinder(entries, dirs...)
-	if err != nil {
-		return err
-	}
-
-	// User cancelled (Ctrl+C)
-	if selected == nil {
-		return nil
-	}
-
-	// Copy to clipboard
-	if err := copyToClipboard(selected.Content); err != nil {
-		fmt.Fprintf(output.stderr, "clipboard: %v\n", err)
-	}
-
-	printResult(output.stdout, selected.Content)
-	return nil
+	return append([]string{commandRefine}, args...)
 }
 
 // copyToClipboard copies text to the system clipboard using a cross-platform library.
