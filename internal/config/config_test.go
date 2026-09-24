@@ -6,8 +6,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/spf13/viper"
 )
 
 func writeTestConfig(t *testing.T, content string) string {
@@ -21,8 +19,6 @@ func writeTestConfig(t *testing.T, content string) string {
 		t.Fatalf("write config: %v", err)
 	}
 	t.Setenv("HOME", home)
-	viper.Reset()
-	t.Cleanup(viper.Reset)
 	return home
 }
 
@@ -132,8 +128,6 @@ func TestLoadMissingFile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	clearAllProviderEnvVars(t)
-	viper.Reset()
-	t.Cleanup(viper.Reset)
 
 	cfg, err := Load()
 	if err != nil {
@@ -184,8 +178,6 @@ func TestLoadStandardEnvironmentVariables(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	clearAllProviderEnvVars(t)
-	viper.Reset()
-	t.Cleanup(viper.Reset)
 
 	t.Setenv("OPENAI_API_KEY", "sk-direct-openai")
 	t.Setenv("GROQ_API_KEY", "gsk-direct-groq")
@@ -210,8 +202,6 @@ func TestLoadAutoDetectsActiveProviderFromEnv(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	clearAllProviderEnvVars(t)
-	viper.Reset()
-	t.Cleanup(viper.Reset)
 
 	// Case 1: No config, OPENAI_API_KEY set -> auto-selects openai
 	t.Setenv("OPENAI_API_KEY", "sk-openai-detected")
@@ -226,7 +216,6 @@ func TestLoadAutoDetectsActiveProviderFromEnv(t *testing.T) {
 	// Case 2: No config, GROQ_API_KEY set (with no OpenAI key) -> auto-selects groq
 	clearAllProviderEnvVars(t)
 	t.Setenv("GROQ_API_KEY", "gsk-groq-detected")
-	viper.Reset()
 	cfg, err = Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -277,6 +266,42 @@ func TestLoadMaxOutputTokensExplicit(t *testing.T) {
 	}
 }
 
+func TestLoadDoesNotCarryConfigAcrossHomes(t *testing.T) {
+	clearAllProviderEnvVars(t)
+	firstHome := writeTestConfig(t, `{"provider":"openai","prompt_file":"~/first.md","max_output_tokens":123,"openai":{"model":"file-model"}}`)
+	t.Setenv("PROMPTER_PROVIDER", "groq")
+	t.Setenv("PROMPTER_MAX_OUTPUT_TOKENS", "456")
+	t.Setenv("PROMPTER_PROMPT_FILE", "")
+
+	first, err := Load()
+	if err != nil {
+		t.Fatalf("first Load: %v", err)
+	}
+	if first.Provider != "groq" || first.MaxOutputTokens != 456 || !first.MaxOutputTokensExplicit {
+		t.Errorf("first load precedence: provider %q, tokens %d, explicit %v", first.Provider, first.MaxOutputTokens, first.MaxOutputTokensExplicit)
+	}
+	if first.Providers["openai"].Model != "file-model" || first.PromptFile != filepath.Join(firstHome, "first.md") {
+		t.Errorf("first load file values: openai model %q, prompt file %q", first.Providers["openai"].Model, first.PromptFile)
+	}
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PROMPTER_PROVIDER", "")
+	t.Setenv("PROMPTER_MAX_OUTPUT_TOKENS", "")
+	second, err := Load()
+	if err != nil {
+		t.Fatalf("second Load: %v", err)
+	}
+	if second.Provider != "gemini" || second.PromptFile != "" {
+		t.Errorf("second load retained file values: provider %q, prompt file %q", second.Provider, second.PromptFile)
+	}
+	if second.MaxOutputTokens != DefaultMaxOutputTokens || second.MaxOutputTokensExplicit {
+		t.Errorf("second load tokens = %d, explicit %v; want %d, false", second.MaxOutputTokens, second.MaxOutputTokensExplicit, DefaultMaxOutputTokens)
+	}
+	if got := second.Providers["openai"].Model; got != DefaultProviders()["openai"].Model {
+		t.Errorf("second load openai model = %q, want default %q", got, DefaultProviders()["openai"].Model)
+	}
+}
+
 func TestLoadDefaultCopy(t *testing.T) {
 	writeTestConfig(t, `{"provider":"gemini","default_copy":true,"gemini":{"model":"gemini-3.7-flash"}}`)
 	cfg, err := Load()
@@ -291,8 +316,6 @@ func TestLoadDefaultCopy(t *testing.T) {
 func TestSaveConfigAndKeyEnv(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	viper.Reset()
-	t.Cleanup(viper.Reset)
 
 	cfg, err := Load()
 	if err != nil {
@@ -321,7 +344,6 @@ func TestSaveConfigAndKeyEnv(t *testing.T) {
 
 	// Now set the custom env var and test Load()
 	t.Setenv("MY_GROQ_KEY_ENV", "gsk-custom-secret")
-	viper.Reset()
 	loaded, err := Load()
 	if err != nil {
 		t.Fatalf("Load reloaded config: %v", err)
@@ -385,8 +407,6 @@ func TestPathExpandAndUnexpand(t *testing.T) {
 func TestSaveWritesPortableHomePaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	viper.Reset()
-	t.Cleanup(viper.Reset)
 
 	cfg := &Config{
 		Provider:       "gemini",
