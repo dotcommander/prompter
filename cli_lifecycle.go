@@ -60,10 +60,6 @@ func main() {
 	}
 }
 
-func execute(args []string, stdout, stderr io.Writer) int {
-	return executeContext(context.Background(), args, stdout, stderr)
-}
-
 func executeContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return newExecutionPipeline(ctx, args, stdout, stderr).run()
 }

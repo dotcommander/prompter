@@ -1,92 +1,66 @@
 # Prompter
 
-Turn rough prompt material into usable AI prompts from the terminal. Prompter has three operations: enrichment (the default), offline image-prompt assembly, and configuration.
+Want a prompt you can inspect or pipe into another tool? Prompter assembles image-generation prompt text offline, or sends rough text to a configured AI provider for enrichment. From this checkout, start with the offline example below: it prints a prompt without credentials or an image-generation request.
 
-| Goal | Invocation | Result |
+| Path | Start here | Result |
 | --- | --- | --- |
-| Improve rough prompt input | `prompter [input]` or `prompter refine [input]` | Sends the prepared input to the selected LLM provider. |
-| Assemble an image prompt offline | `prompter --image <subject>` | Prints prompt text built from a subject and local components. |
-| Inspect or change settings | `prompter --config` | Opens the configuration form, or prints resolved non-secret settings on redirected output. |
+| Offline image prompt | [Assemble a prompt](#assemble-a-prompt-offline) | Prompt text on stdout; `--json` for structured output. |
+| Provider enrichment | [Enrich text](#enrich-text) | Improved prompt text on stdout; requires provider access. |
+| Configuration | [Configuration and local state](#configuration-and-local-state) | Interactive form on a terminal, resolved settings when redirected. |
 
-## First use: assemble an offline image prompt
+## Assemble a prompt offline
 
-**Prerequisite:** this module declares Go `1.26.3`. Run this command from the repository root; `GOWORK=off` selects this module instead of a parent Go workspace.
+**Prerequisite:** Go compatible with the module's `go 1.26.3` directive. Run this from the repository root. `GOWORK=off` uses this module rather than a parent Go workspace.
 
 ```bash
 GOWORK=off go run . --image "desert observatory" --profile minimal
 ```
 
-It prints:
+Expected stdout (verified against the current source and runtime):
 
 ```text
 desert observatory, clean composition, concept art
 ```
 
-The `minimal` profile combines the supplied subject with selected local components. It builds a prompt string only, so it makes no provider request and does not create an image.
+The subject and selected embedded components become one prompt string. `--image` does not generate an image or call a provider. To use the result in a pipeline, try `printf 'desert observatory\n' | GOWORK=off go run . --image --profile minimal`. For structured output, use `--json`; with `--count 2`, the result is a JSON array of two variations. See [CLI flags](docs/flags.md) for the image options.
 
-Source-checked, not executed for this README: add `--json` to emit the assembled result as JSON.
+## Enrich text
 
-```bash
-GOWORK=off go run . --image "desert observatory" --json
-```
-
-## Enrichment
-
-Enrichment is the default operation. All three forms run the same path:
+**Prerequisite:** choose a provider and configure its credentials or local endpoint before making a live request. Provider details are in [Providers](docs/providers.md). A dry run needs input but does not call the provider:
 
 ```bash
-prompter "rough prompt"                 # positional input
-prompter refine "rough prompt"          # explicit alias
-printf 'rough prompt' | prompter        # piped input
+printf 'rough prompt' | GOWORK=off go run . refine --dry-run --provider groq
 ```
 
-Provider, model, endpoint, style, file-input, output-file, clipboard, dry-run, streaming, and verbose-timing flags are documented in [CLI flags](docs/flags.md). `--dry-run` prints resolved settings to standard error without contacting a provider, so it is the safe first check for a new configuration.
+It prints resolved settings to stderr and no prompt to stdout (verified). This lets you inspect the selected model and credential source without sending the text. When configured, omit `--dry-run` to request an enriched prompt:
 
-## Migrating from earlier versions
+```bash
+printf 'rough prompt' | GOWORK=off go run . refine --provider groq
+```
 
-Earlier releases exposed subcommands. They are intentionally removed, and typing one returns a migration error instead of silently calling a provider:
-
-| Earlier command | Replacement |
-| --- | --- |
-| `image` | `--image` |
-| `configure`, `config` | `--config` |
-| `critique`, `rewrite`, `apply`, `browse`, `models refresh`, `prompts status\|upgrade` | Removed; no replacement |
-
-`refine` remains the only command word. To pass a retired word as literal input, put it after `--` (for example, `prompter -- critique`).
+That live command is source-checked, not executed here. The input travels to the selected provider; its response goes to stdout. The bare form `prompter "rough prompt"` and the explicit `prompter refine "rough prompt"` select the same enrichment operation. If installed or built as `prompter`, piped input also works with `printf 'rough prompt' | prompter`. For file input and output, use `--file` and `--output`; the output file is additional to stdout. See [CLI flags](docs/flags.md) and [Automation](docs/use-json-output.md).
 
 ## Configuration and local state
 
-Prompter resolves settings in this order:
+Configuration uses CLI overrides where available, environment variables, `~/.config/prompter/config.json`, and built-in defaults in that order. The exact provider variables and defaults are described in [Providers](docs/providers.md). Configuration saves to `~/.config/prompter/config.json`; paths using `~` are expanded when loaded and saved portably. The default image component path is `~/.config/prompter/components.json`: if it is absent, the image operation uses embedded components; it does not need to create that file. Existing components at the configured path are read for assembly, not written by that operation.
 
-```text
-CLI flags > environment variables > ~/.config/prompter/config.json > defaults
-```
-
-`prompter --config` opens the configuration form only when standard input and output are interactive terminals; the form uses the configured model and local model choices, so opening it makes no network request. With redirected output, it prints the resolved non-secret configuration instead. The configuration file stores provider, prompt-directory, component-library, timeout, output-token, retry, and clipboard settings.
-
-The default component-library location is `~/.config/prompter/components.json`. Existing prompt vaults, catalogs, caches, and component files on disk are never modified or deleted by prompter.
-
-## Non-goals and operating limits
-
-- `--image` assembles image-generation prompt text; it does not generate an image, load a provider, or touch the network.
-- Only one operation runs per invocation; combining `--image` with `--config` or mixing an operation flag with `refine` is a usage error.
-- A streamed provider call can write partial text before it exits with an error; discard captured streamed output after a nonzero exit.
+`prompter --config` opens a local form only when stdin and stdout are interactive terminals. With redirected output it prints resolved settings instead; it does not contact a model catalog. The displayed settings are not a credential-validation test. Before putting configuration output in a public log, inspect configured endpoint values and paths. The form writes the config file when saved.
 
 ## Verification and contribution
 
-Source-checked, not executed for this documentation-only change:
+From the repository root, after installing a compatible Go toolchain, these commands build and exercise the code, documentation checks, and eval harness tests:
 
 ```bash
-GOWORK=off go test -count=1 . ./doctests/...
-GOWORK=off go build -o prompter .
+GOWORK=off go build ./...
+GOWORK=off go test -count=1 . ./doctests/... ./internal/config ./internal/provider ./evals/enhance
 GOWORK=off go vet ./...
-gofmt -l .
 ```
 
-The test command runs the repository test packages. The build creates a local `prompter` binary. `gofmt -l .` prints paths only for files that need formatting.
-
-For detailed setup, flags, provider behavior, automation, and troubleshooting, see [the documentation index](docs/index.md), [Setup](docs/setup.md), [CLI flags](docs/flags.md), [Providers](docs/providers.md), [Automation](docs/use-json-output.md), and [Troubleshooting](docs/troubleshooting.md).
+The test command was run for this README; the build and vet commands above are source-checked but not executed for this documentation change. `GOWORK=off go run . --help` shows the root operation list. For repository layout and more checks, see [Contributor guide](docs/change-prompter.md); for setup, see [Setup](docs/setup.md).
 
 ## Limits and non-goals
 
-Remote enrichment needs a configured provider. The offline `--image` operation is the supported credential-free path.
+- Image assembly produces prompt text, not an image. Remote enrichment requires a configured provider; it may incur provider usage costs. A dry run makes no provider call.
+- Only one operation runs per invocation. `--image` and `--config` cannot be combined with each other or `refine`; retired command words return usage errors rather than calling a provider. To pass one as literal enrichment input, put it after `--`.
+- File and piped input are limited to 1 MiB. A streamed provider call can leave partial stdout on failure, so check the exit status before consuming captured output. `--stream` cannot be combined with `--output` or `--copy`.
+- For failures and exit codes, see [Troubleshooting](docs/troubleshooting.md) and [Automation](docs/use-json-output.md).

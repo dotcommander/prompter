@@ -2,7 +2,9 @@ package main
 
 import (
 	"embed"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -39,10 +41,17 @@ func resolveStyle(name string) (string, error) {
 }
 
 func resolveStyleFromDir(name, userStylesDir string) (string, error) {
+	if strings.ContainsAny(name, `/\\`) {
+		return "", fmt.Errorf("invalid style name %q", name)
+	}
 	if userStylesDir != "" {
 		userPath := filepath.Join(userStylesDir, name+".md")
-		if data, readErr := os.ReadFile(userPath); readErr == nil {
-			return string(data), nil
+		prompt, err := readBoundedFile(userPath)
+		switch {
+		case err == nil:
+			return prompt, nil
+		case !errors.Is(err, fs.ErrNotExist):
+			return "", fmt.Errorf("read style file %s: %w", userPath, err)
 		}
 	}
 	// Fall back to embedded

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,20 @@ import (
 	"github.com/dotcommander/prompter/internal/config"
 	"github.com/dotcommander/prompter/internal/provider"
 )
+
+// Test-only adapters preserve the existing call sites while keeping production
+// entry points and output wiring in their owning files.
+func parseArgs(args []string) (*flags, error) {
+	return parseArgsTo(args, os.Stderr)
+}
+
+func newLogger(verbose bool) *slog.Logger {
+	return newLoggerTo(os.Stderr, verbose)
+}
+
+func run(ctx context.Context, f *flags, cfg *config.Config, logger *slog.Logger) error {
+	return runWithOutput(ctx, f, cfg, logger, commandOutput{stdout: os.Stdout, stderr: os.Stderr})
+}
 
 // -----------------------------------------------------------------------------
 // Provider Interface Tests
@@ -341,6 +357,8 @@ func TestParseArgs_RejectsOperationCollisions(t *testing.T) {
 		{"refine with image", []string{commandRefine, imageOperationFlag, "x"}, "cannot be combined"},
 		{"refine with config", []string{commandRefine, configOperationFlag}, "cannot be combined"},
 		{"image with refine", []string{imageOperationFlag, commandRefine, "x"}, "refine"},
+		{"image control after bool flag", []string{commandRefine, "--verbose", imageOperationFlag}, "cannot be combined"},
+		{"config control after file flag with value", []string{commandRefine, "--file", "notes.md", "--config"}, "cannot be combined"},
 		{"config with input", []string{configOperationFlag, "extra"}, "does not accept input"},
 		{"config with literal input", []string{configOperationFlag, "--", "extra"}, "does not accept input"},
 	}
@@ -355,6 +373,56 @@ func TestParseArgs_RejectsOperationCollisions(t *testing.T) {
 				t.Fatalf("parseArgs(%q) error = %v, want containing %q", tt.args, err, tt.want)
 			}
 		})
+	}
+}
+
+func TestParseArgs_FlagValuesAreNotOperationControls(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		args      []string
+		wantCmd   string
+		wantFile  string
+		wantStyle string
+		wantSeed  string
+	}{
+		{name: "config word as file value", args: []string{commandRefine, "--file", "--config"}, wantCmd: commandRefine, wantFile: "--config"},
+		{name: "image flag as style value", args: []string{"--style", "--image"}, wantCmd: commandRefine, wantStyle: "--image"},
+		{name: "config flag as inline style value", args: []string{"--style=--config"}, wantCmd: commandRefine, wantStyle: "--config"},
+		{name: "config flag as image seed value", args: []string{imageOperationFlag, "--seed", "--config"}, wantCmd: commandImage, wantSeed: "--config"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			f, err := parseArgs(tt.args)
+			if err != nil {
+				t.Fatalf("parseArgs(%q) error: %v", tt.args, err)
+			}
+			if f.command != tt.wantCmd {
+				t.Fatalf("parseArgs(%q) command = %q, want %q", tt.args, f.command, tt.wantCmd)
+			}
+			if f.file != tt.wantFile || f.style != tt.wantStyle || f.seed != tt.wantSeed {
+				t.Fatalf("parseArgs(%q) parsed flags = %+v", tt.args, f)
+			}
+		})
+	}
+}
+
+func TestParseArgs_HelpValueDoesNotTriggerUsage(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	f, err := parseArgsTo([]string{commandRefine, "--file", "-h"}, &stderr)
+	if err != nil {
+		t.Fatalf("parseArgsTo error: %v", err)
+	}
+	if f.file != "-h" {
+		t.Fatalf("file = %q, want %q", f.file, "-h")
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want no usage output for a flag value", stderr.String())
 	}
 }
 
@@ -397,6 +465,45 @@ func TestCLIInputReader(t *testing.T) {
 				t.Errorf("Read() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestReadInput_PositionalSizeLimit(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantError bool
+	}{
+		{name: "exactly limit", args: []string{strings.Repeat("x", maxInputBytes)}},
+		{name: "single oversized argument", args: []string{strings.Repeat("x", maxInputBytes+1)}, wantError: true},
+		{name: "separator exceeds limit", args: []string{strings.Repeat("x", maxInputBytes), "y"}, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := readInput("", tc.args)
+			if tc.wantError {
+				if err == nil || !strings.Contains(err.Error(), "input exceeds") {
+					t.Fatalf("readInput error = %v, want size limit", err)
+				}
+				return
+			}
+			if err != nil || len(got) != maxInputBytes {
+				t.Fatalf("readInput length = %d, error = %v", len(got), err)
+			}
+		})
+	}
+}
+
+func TestRunRejectsOversizedPositionalInputBeforeProviderCall(t *testing.T) {
+	t.Parallel()
+	f := &flags{command: commandRefine, args: []string{strings.Repeat("x", maxInputBytes+1)}}
+	cfg := &config.Config{Provider: "groq", Providers: map[string]config.ProviderConfig{
+		"groq": {Model: "model", APIKey: "key"},
+	}}
+	err := runWithOutput(context.Background(), f, cfg, newLogger(false), commandOutput{stdout: &strings.Builder{}, stderr: &strings.Builder{}})
+	if err == nil || !strings.Contains(err.Error(), "input exceeds") {
+		t.Fatalf("runWithOutput error = %v, want positional size limit", err)
 	}
 }
 
@@ -618,18 +725,18 @@ func TestAssemblePromptRejectsUnknownAndDuplicateCategories(t *testing.T) {
 	}
 }
 
-func TestComponentStats(t *testing.T) {
+func TestDefaultComponentLibraryHasEachComponentType(t *testing.T) {
 	t.Parallel()
 
 	lib, err := loadComponentLibrary("")
 	if err != nil {
 		t.Fatalf("loadComponentLibrary error: %v", err)
 	}
-	stats := componentStats(lib)
-	for _, key := range []string{"subjects", "modifiers", "artists", "platforms", "category:quality"} {
-		if stats[key] == 0 {
-			t.Fatalf("stats[%q] = 0, want > 0", key)
-		}
+	if len(lib.Subjects) == 0 || len(lib.Modifiers) == 0 || len(lib.Artists) == 0 || len(lib.Platforms) == 0 {
+		t.Fatalf("default component library is missing a component type")
+	}
+	if !slices.ContainsFunc(lib.Modifiers, func(m PromptModifier) bool { return m.Category == "quality" }) {
+		t.Fatal("default component library has no quality modifiers")
 	}
 }
 
@@ -659,6 +766,25 @@ func TestLoadComponentLibraryConfiguredFile(t *testing.T) {
 		}
 		if len(lib.Modifiers) == 0 {
 			t.Fatal("missing file library has no default modifiers")
+		}
+	})
+
+	t.Run("oversized file is rejected", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "components.json")
+		if err := os.WriteFile(path, bytes.Repeat([]byte("a"), maxInputBytes+1), 0o600); err != nil {
+			t.Fatalf("write oversized components file: %v", err)
+		}
+
+		_, err := loadComponentLibrary(path)
+		if err == nil {
+			t.Fatal("loadComponentLibrary expected size error, got nil")
+		}
+		for _, want := range []string{"read components file", "1 MB limit"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("loadComponentLibrary error = %v, want containing %q", err, want)
+			}
 		}
 	})
 
@@ -714,6 +840,60 @@ func TestResolveStyleUserOverride(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("resolveStyleFromDir(custom) = %q, want %q", got, want)
+	}
+}
+
+func TestResolveStyleUserOverrideSizeLimit(t *testing.T) {
+	t.Parallel()
+
+	stylesDir := t.TempDir()
+	path := filepath.Join(stylesDir, "custom.md")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("a"), maxInputBytes+1), 0600); err != nil {
+		t.Fatalf("write oversized style override: %v", err)
+	}
+
+	_, err := resolveStyleFromDir("custom", stylesDir)
+	if err == nil {
+		t.Fatal("resolveStyleFromDir expected size error, got nil")
+	}
+	for _, want := range []string{"read style file", "1 MB limit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("resolveStyleFromDir error = %v, want containing %q", err, want)
+		}
+	}
+}
+
+func TestResolveStyle_RejectsPathSeparators(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"../enhance", "sub/dir", `a\b`} {
+		_, err := resolveStyle(name)
+		if err == nil || !strings.Contains(err.Error(), "invalid style name") {
+			t.Errorf("resolveStyle(%q) error = %v, want invalid style name", name, err)
+		}
+	}
+}
+
+func TestLoadSystemPrompt_PromptFileSizeLimit(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "big-prompt.md")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("a"), maxInputBytes+1), 0600); err != nil {
+		t.Fatalf("write oversized prompt file: %v", err)
+	}
+
+	cfg := &config.Config{PromptFile: path}
+	err := loadSystemPrompt(cfg)
+	if err == nil {
+		t.Fatal("loadSystemPrompt expected size error, got nil")
+	}
+	for _, want := range []string{"read prompt file", "1 MB limit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("loadSystemPrompt error = %v, want containing %q", err, want)
+		}
+	}
+	if cfg.SystemPrompt != "" {
+		t.Errorf("SystemPrompt = %q, want empty on failure", cfg.SystemPrompt)
 	}
 }
 
@@ -980,6 +1160,33 @@ func TestRunConfig(t *testing.T) {
 	printConfig(&out, cfg)
 	if !strings.Contains(out.String(), "gemini-3.7-flash") {
 		t.Fatalf("printConfig output missing model:\n%s", out.String())
+	}
+}
+
+func TestAuthKeyLine(t *testing.T) {
+	tests := []struct {
+		name     string
+		env      map[string]string
+		provider string
+		settings config.ProviderConfig
+		want     string
+	}{
+		{name: "omlx is keyless", provider: "omlx", want: "Auth Key:          $OMLX_API_KEY (local server / keyless)"},
+		{name: "gemini key detected", env: map[string]string{"GEMINI_API_KEY": "AIza-test"}, provider: "gemini", want: "Auth Key:          $GEMINI_API_KEY (detected ✓)"},
+		{name: "gemini falls back to adc", env: map[string]string{"GEMINI_API_KEY": ""}, provider: "gemini", want: "Auth Key:          Google ADC (not checked)"},
+		{name: "default env detected", env: map[string]string{"GROQ_API_KEY": "gsk-test"}, provider: "groq", want: "Auth Key:          $GROQ_API_KEY (detected ✓)"},
+		{name: "default env missing", env: map[string]string{"GROQ_API_KEY": ""}, provider: "groq", want: "Auth Key:          $GROQ_API_KEY (not set ✗)"},
+		{name: "custom key env detected", env: map[string]string{"MY_KEY": "x"}, provider: "openai", settings: config.ProviderConfig{KeyEnv: "MY_KEY"}, want: "Auth Key:          $MY_KEY (detected ✓)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+			if got := authKeyLine(tt.provider, tt.settings); got != tt.want {
+				t.Fatalf("authKeyLine(%q) = %q, want %q", tt.provider, got, tt.want)
+			}
+		})
 	}
 }
 

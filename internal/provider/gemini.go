@@ -29,7 +29,6 @@ type geminiProvider struct {
 	location        string
 	model           string
 	baseURL         string
-	maxRetries      int
 	maxOutputTokens int
 	client          *http.Client
 	tokenResolver   func(context.Context) (string, error)
@@ -77,7 +76,10 @@ type geminiPromptFeedback struct {
 }
 
 // NewGemini creates a Provider backed by Vertex AI or Google AI Studio generateContent.
+// maxRetries is retained for caller compatibility; generation is never retried
+// because a failed response cannot prove the remote request was not processed.
 func NewGemini(apiKey, projectID, location, model, baseURL string, maxRetries, maxOutputTokens int) Provider {
+	_ = maxRetries
 	if location == "" {
 		location = defaultGeminiLocation
 	}
@@ -95,7 +97,6 @@ func NewGemini(apiKey, projectID, location, model, baseURL string, maxRetries, m
 		location:        location,
 		model:           model,
 		baseURL:         baseURL,
-		maxRetries:      max(maxRetries, 0),
 		maxOutputTokens: maxOutputTokens,
 		client:          &http.Client{},
 		tokenResolver:   googleADCAccessToken,
@@ -213,33 +214,18 @@ func (p *geminiProvider) setHeaders(ctx context.Context, httpReq *http.Request) 
 }
 
 func (p *geminiProvider) do(ctx context.Context, endpoint string, body []byte) (*http.Response, error) {
-	for attempt := 0; ; attempt++ {
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("gemini create request: %w", err)
-		}
-		if err := p.setHeaders(ctx, httpReq); err != nil {
-			return nil, fmt.Errorf("gemini: %w", err)
-		}
-
-		resp, err := p.client.Do(httpReq)
-		if err != nil {
-			if attempt < p.maxRetries && ctx.Err() == nil {
-				continue
-			}
-			return nil, fmt.Errorf("gemini: %w", err)
-		}
-		if attempt < p.maxRetries && retryableGeminiStatus(resp.StatusCode) {
-			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxGeminiErrorBytes))
-			_ = resp.Body.Close()
-			continue
-		}
-		return resp, nil
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("gemini create request: %w", err)
 	}
-}
-
-func retryableGeminiStatus(status int) bool {
-	return status == http.StatusRequestTimeout || status == http.StatusConflict || status == http.StatusTooManyRequests || status >= 500
+	if err := p.setHeaders(ctx, httpReq); err != nil {
+		return nil, fmt.Errorf("gemini: %w", err)
+	}
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("gemini: %w (request outcome may be unknown; automatic retry disabled)", err)
+	}
+	return resp, nil
 }
 
 func (p *geminiProvider) Call(ctx context.Context, req CallRequest) (string, error) {

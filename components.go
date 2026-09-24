@@ -4,8 +4,9 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io/fs"
 	"slices"
 	"sort"
 	"strings"
@@ -120,18 +121,18 @@ func assemblyProfile(name string) (AssemblyProfile, error) {
 }
 
 func loadComponentLibrary(path string) (*ComponentLibrary, error) {
-	data := []byte(defaultComponentsJSON)
-	if strings.TrimSpace(path) != "" {
-		read, err := os.ReadFile(path)
+	data := defaultComponentsJSON
+	if trimmed := strings.TrimSpace(path); trimmed != "" {
+		read, err := readBoundedFile(trimmed)
 		if err == nil {
 			data = read
-		} else if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("read components file %s: %w", path, err)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("read components file %s: %w", trimmed, err)
 		}
 	}
 
 	var lib ComponentLibrary
-	if err := json.Unmarshal(data, &lib); err != nil {
+	if err := json.Unmarshal([]byte(data), &lib); err != nil {
 		return nil, fmt.Errorf("parse components: %w", err)
 	}
 	if len(lib.Modifiers) == 0 {
@@ -312,17 +313,4 @@ func buildAssembledPromptString(assembled *AssembledPrompt) string {
 		texts = append(texts, p.text)
 	}
 	return strings.Join(texts, ", ")
-}
-
-func componentStats(lib *ComponentLibrary) map[string]int {
-	stats := map[string]int{
-		"subjects":  len(lib.Subjects),
-		"modifiers": len(lib.Modifiers),
-		"artists":   len(lib.Artists),
-		"platforms": len(lib.Platforms),
-	}
-	for _, modifier := range lib.Modifiers {
-		stats["category:"+modifier.Category]++
-	}
-	return stats
 }

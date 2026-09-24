@@ -49,6 +49,21 @@ func retiredCommandError(name string) error {
 	}
 }
 
+// consumesFollowingToken reports whether arg names a registered flag whose
+// value arrives as the next separate token, mirroring flag package parsing.
+func consumesFollowingToken(fs *flag.FlagSet, arg string) bool {
+	name, _, inline := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+	if inline {
+		return false
+	}
+	registered := fs.Lookup(name)
+	if registered == nil {
+		return false
+	}
+	boolFlag, isBool := registered.Value.(interface{ IsBoolFlag() bool })
+	return !isBool || !boolFlag.IsBoolFlag()
+}
+
 // interspersedFlagArgs moves recognized flag tokens before positional input so
 // flag.FlagSet can accept documented forms such as "subject --count 3". Tokens
 // after -- remain literal positional input.
@@ -73,13 +88,7 @@ func interspersedFlagArgs(fs *flag.FlagSet, args []string) []string {
 		}
 
 		flags = append(flags, arg)
-		name, _, hasInlineValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
-		takesValue := false
-		if registered := fs.Lookup(name); registered != nil {
-			boolFlag, isBool := registered.Value.(interface{ IsBoolFlag() bool })
-			takesValue = !isBool || !boolFlag.IsBoolFlag()
-		}
-		if takesValue && !hasInlineValue {
+		if consumesFollowingToken(fs, arg) {
 			if i+1 >= len(args) {
 				return flags
 			}
@@ -94,18 +103,27 @@ func interspersedFlagArgs(fs *flag.FlagSet, args []string) []string {
 	return append(append(flags, "--"), positional...)
 }
 
-// indexBeforeLiteralBoundary returns the index of token in args, or -1 when the
-// token is absent or appears after a bare "--" literal-input boundary.
-func indexBeforeLiteralBoundary(args []string, token string) int {
-	for i, arg := range args {
+// containsControlFlag ignores registered flag values and literal input.
+func containsControlFlag(fs *flag.FlagSet, args []string, token string) bool {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "--" {
-			return -1
+			return false
 		}
 		if arg == token {
-			return i
+			return true
+		}
+		if consumesFollowingToken(fs, arg) {
+			i++
 		}
 	}
-	return -1
+	return false
+}
+
+func operationFlagSet(command string) *flag.FlagSet {
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	registerFlags(fs, &flags{command: command})
+	return fs
 }
 
 // selectOperation resolves the single operation for an invocation and returns
@@ -122,16 +140,17 @@ func selectOperation(args []string) (string, []string, error) {
 	switch args[0] {
 	case commandRefine:
 		rest := args[1:]
-		if indexBeforeLiteralBoundary(rest, imageOperationFlag) >= 0 {
+		fs := operationFlagSet(commandRefine)
+		if containsControlFlag(fs, rest, imageOperationFlag) {
 			return "", nil, fmt.Errorf("%s cannot be combined with %s", commandRefine, imageOperationFlag)
 		}
-		if indexBeforeLiteralBoundary(rest, configOperationFlag) >= 0 {
+		if containsControlFlag(fs, rest, configOperationFlag) {
 			return "", nil, fmt.Errorf("%s cannot be combined with %s", commandRefine, configOperationFlag)
 		}
 		return commandRefine, rest, nil
 	case imageOperationFlag:
 		rest := args[1:]
-		if indexBeforeLiteralBoundary(rest, configOperationFlag) >= 0 {
+		if containsControlFlag(operationFlagSet(commandImage), rest, configOperationFlag) {
 			return "", nil, fmt.Errorf("%s and %s cannot be combined", imageOperationFlag, configOperationFlag)
 		}
 		if len(rest) > 0 && rest[0] == commandRefine {
@@ -140,7 +159,7 @@ func selectOperation(args []string) (string, []string, error) {
 		return commandImage, rest, nil
 	case configOperationFlag:
 		rest := args[1:]
-		if indexBeforeLiteralBoundary(rest, imageOperationFlag) >= 0 {
+		if containsControlFlag(operationFlagSet(commandConfig), rest, imageOperationFlag) {
 			return "", nil, fmt.Errorf("%s and %s cannot be combined", imageOperationFlag, configOperationFlag)
 		}
 		if len(rest) > 0 && rest[0] == commandRefine {

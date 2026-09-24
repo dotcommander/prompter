@@ -91,10 +91,13 @@ type openAIProvider struct {
 
 // NewOpenAI creates a Provider backed by the OpenAI Responses API.
 // baseURL is optional; when empty the default api.openai.com endpoint is used.
+// maxRetries is retained for caller compatibility; generation requests are not
+// automatically replayed after an outcome that may already have been processed.
 func NewOpenAI(apiKey, model, baseURL string, maxRetries, maxOutputTokens int) Provider {
+	_ = maxRetries
 	opts := []option.RequestOption{
 		option.WithAPIKey(apiKey),
-		option.WithMaxRetries(maxRetries),
+		option.WithMaxRetries(0),
 	}
 	if baseURL != "" {
 		opts = append(opts, option.WithBaseURL(baseURL))
@@ -213,11 +216,13 @@ type chatProvider struct {
 }
 
 // NewChat creates a Provider backed by the OpenAI-compatible Chat Completions API.
+// maxRetries is retained for caller compatibility; generation is not automatically retried.
 func NewChat(name, apiKey, model, baseURL string, maxRetries int, maxOutputTokens ...int) Provider {
+	_ = maxRetries
 	c := openai.NewClient(
 		option.WithAPIKey(apiKey),
 		option.WithBaseURL(baseURL),
-		option.WithMaxRetries(maxRetries),
+		option.WithMaxRetries(0),
 	)
 	limit := 0
 	if len(maxOutputTokens) > 0 {

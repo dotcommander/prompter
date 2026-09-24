@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/dotcommander/prompter/internal/config"
 )
@@ -19,11 +18,11 @@ func loadSystemPrompt(cfg *config.Config) error {
 		return nil
 	}
 
-	data, err := os.ReadFile(cfg.PromptFile)
+	prompt, err := readBoundedFile(cfg.PromptFile)
 	if err != nil {
 		return fmt.Errorf("read prompt file %s: %w", cfg.PromptFile, err)
 	}
 
-	cfg.SystemPrompt = string(data)
+	cfg.SystemPrompt = prompt
 	return nil
 }
