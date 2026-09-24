@@ -1,86 +1,51 @@
 # Troubleshooting
 
-Purpose: recover quickly from common setup and runtime failures.
+## A retired command printed a migration error
 
-## Key and credential failures
-
-Error examples:
-
-- `cerebras API key not set`
-- `openai API key not set`
-
-Fix:
-
-1. Set the provider's standard environment variable in your shell:
-   ```bash
-   export CEREBRAS_API_KEY="csk-..."
-   # or for OpenAI:
-   export OPENAI_API_KEY="sk-..."
-   ```
-   Alternatively, you can configure it via `PROMPTER_CEREBRAS_API_KEY` or `~/.config/prompter/config.json`.
-2. For Gemini, authenticate Google ADC (the default Vertex AI endpoint) or
-   switch to the Google AI Studio endpoint:
-   ```bash
-   # Option A: Google Cloud Application Default Credentials (default endpoint)
-   gcloud auth application-default login
-   export GOOGLE_CLOUD_PROJECT="your-project-id"
-
-   # Option B: Google AI Studio — requires both the key and the AI Studio base URL
-   export GEMINI_API_KEY="AIza..."
-   # set gemini.base_url to https://generativelanguage.googleapis.com/v1beta
-   ```
-   An AIza key alone does not replace ADC on the default Vertex AI endpoint.
-3. For the local loopback provider (`omlx`), no API key is required.
-4. Run `prompter refine "test"` again.
-
-## Provider and model failures
-
-Error examples:
-
-- `unknown provider "..."`
-- `model not found`
-- API `timeout` or `connection refused`
-- `groq timed out after 1m0s`
-
-Fix:
-
-For timeouts, increase timeout with `PROMPTER_TIMEOUT=120` or `--dry-run` to inspect.
-
-Default is 60s (streaming uses at least 180s). For other provider errors:
+Older command words (`critique`, `rewrite`, `apply`, `browse`, `models refresh`, `prompts status|upgrade`, `image`, `configure`, `config`) are removed and exit with code 2. Use `--image` for image assembly, `--config` for configuration, and `refine` (or the bare default form) for enrichment. To pass a retired word as literal input, put it after `--`:
 
 ```bash
-# Try a known provider
-prompter refine -p openai "test"
-
-# Override model
-prompter refine -m gpt-5.6-luna "test"
-
-# Override endpoint
-prompter refine --base-url https://api.example.com "test"
+prompter -- critique
 ```
 
-## Finder failures
+## "Only one operation" or collision error
 
-If `prompter browse` does not show usable results:
+Only one operation runs per invocation. `--image` and `--config` cannot be combined, an operation flag cannot be mixed with `refine`, and `--config` rejects positional input. Exit code is 2.
 
-1. Run `prompter browse` again — an empty primary vault is auto-created and
-   seeded with the eight starter prompts on first launch.
-2. Verify `prompts_dir` / `prompts_dirs` exist and contain `.md` prompt files.
-3. Confirm the terminal is interactive (`browse` refuses piped input).
+## "input required" on a bare run
 
-See `finder.md` and `prompt-files.md` for finder and file rules.
+Running `prompter` with no arguments on a non-interactive stdin exits 1. Pass text, use `--file PATH`, or pipe stdin:
 
-## Debugging checklist
+```bash
+printf 'rough prompt' | prompter
+```
 
-- Run `prompter refine -v "test"` and inspect stderr
-- Confirm config JSON is valid
-- Confirm API key is valid for selected provider
-- For `omlx`, check `http://127.0.0.1:8000/v1/models`
-- Try another provider to isolate provider-specific failures
+On an interactive terminal, a bare run prints help instead.
 
-## Related docs
+## Dry run fails or shows the wrong provider
 
-- `setup.md`
-- `finder.md`
-- `flags.md`
-- `use-json-output.md`
+`prompter refine --dry-run` prints the resolved provider, model, base URL, and credential source to stderr without contacting the provider. Check the printed `Credential source`: it names the environment variable or configuration field being read. See [Providers](providers.md) for the per-provider variables.
+
+## Credential or authentication errors exit 1
+
+Remote enrichment resolves a provider; a missing API key or invalid ADC setup fails before any request when detectable, and otherwise the provider returns an authentication error. Configure credentials with `prompter --config` or environment variables, then re-run the dry run to confirm the resolved source.
+
+## Streamed output looks truncated after a failure
+
+`--stream` writes tokens as they arrive. If the call fails mid-stream, partial text may be on stdout even though the exit code is nonzero. Discard streamed output after a nonzero exit; use the default buffered call in automation.
+
+## `--config` opened nothing
+
+The configuration form requires an interactive terminal on both stdin and stdout. With redirected output, `--config` prints the resolved non-secret configuration instead — that is the expected behavior in scripts and CI.
+
+## Timeout or retry behavior
+
+Request timeouts and retries come from the configuration (`timeout` in seconds, `max_retries`); streaming enforces a minimum timeout of 180 seconds. `prompter --config` shows the resolved values.
+
+## Input size errors
+
+Input is capped at 1 MB from any source (arguments, `--file`, stdin). Exceeding it exits 1; split the input or trim the file.
+
+## Still stuck?
+
+Check [Common tasks](common-tasks.md) for the intended invocation, and [CLI flags](flags.md) for the exact accepted flags.

@@ -88,10 +88,9 @@ type modelChoice struct {
 	label string
 }
 
-func popularModelsFor(p string, discovered ...map[string][]modelChoice) []modelChoice {
-	if len(discovered) > 0 && len(discovered[0][p]) > 0 {
-		return discovered[0][p]
-	}
+// popularModelsFor returns the local, offline model choices offered by the
+// configuration form. No catalog fetch happens to open configuration.
+func popularModelsFor(p string) []modelChoice {
 	switch p {
 	case "gemini":
 		return []modelChoice{
@@ -140,7 +139,9 @@ func popularModelsFor(p string, discovered ...map[string][]modelChoice) []modelC
 }
 
 // RunConfigForm launches an interactive TUI form to configure prompter settings.
-func RunConfigForm(cfg *config.Config, discovered ...map[string][]modelChoice) error {
+// It uses only the configured model and local model choices; opening the form
+// never performs a network request.
+func RunConfigForm(cfg *config.Config) error {
 	selectedProvider := cfg.Provider
 	if selectedProvider == "" {
 		selectedProvider = "gemini"
@@ -244,7 +245,7 @@ func RunConfigForm(cfg *config.Config, discovered ...map[string][]modelChoice) e
 	baseURL := pCfg.BaseURL
 
 	// Prepare recent model choices
-	popularModels := popularModelsFor(selectedProvider, discovered...)
+	popularModels := popularModelsFor(selectedProvider)
 	modelOptions := make([]huh.Option[string], 0, len(popularModels)+1)
 	isPreset := false
 
@@ -382,9 +383,9 @@ func RunConfigForm(cfg *config.Config, discovered ...map[string][]modelChoice) e
 	cfg.Effort = effort
 	cfg.DefaultCopy = defaultCopy
 
-	// Save to config file with portable ~ paths and ensure prompt vault
-	if err := saveConfigAndVault(cfg); err != nil {
-		return err
+	// Save to config file with portable ~ paths
+	if err := config.Save(cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
 	}
 
 	home, _ := os.UserHomeDir()
@@ -426,31 +427,7 @@ func RunConfigForm(cfg *config.Config, discovered ...map[string][]modelChoice) e
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Println("\nReady! Try running:")
 	fmt.Println("  prompter refine \"explain quantum computing to a 10 year old\"")
-	fmt.Println("  prompter browse")
+	fmt.Println("  prompter --image \"desert observatory\" --profile minimal")
 
-	return nil
-}
-
-func confirmEmbeddedModelCatalog(fetchErr error) (bool, error) {
-	useEmbedded := false
-	confirm := huh.NewConfirm().
-		Title("Models.dev catalog unavailable").
-		Description(fmt.Sprintf("%v\nUse prompter's embedded verified model catalog instead?", fetchErr)).
-		Affirmative("Use embedded catalog").
-		Negative("Cancel").
-		Value(&useEmbedded)
-	if err := huh.NewForm(huh.NewGroup(confirm)).Run(); err != nil {
-		return false, fmt.Errorf("model catalog fallback confirmation: %w", err)
-	}
-	return useEmbedded, nil
-}
-
-func saveConfigAndVault(cfg *config.Config) error {
-	if err := config.Save(cfg); err != nil {
-		return fmt.Errorf("save config: %w", err)
-	}
-	if _, _, err := ensurePromptVaultStrict(cfg); err != nil {
-		return fmt.Errorf("ensure prompt vault: %w", err)
-	}
 	return nil
 }

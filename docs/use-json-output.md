@@ -1,38 +1,64 @@
-# Automation and image JSON
+# Automation
 
-Use explicit commands in scripts, capture standard output as the result, and treat a nonzero exit as failure even when a stream has already written text.
+Prompter is built for pipelines: machine-readable output goes to stdout, diagnostics go to stderr, and exit codes are stable.
 
-## First automation check
+## Stdout and stderr contract
 
-**Prerequisite:** the image command is the credential-free path. Run this source-checked, unexecuted example from the repository root when you need structured output.
+- Operation output (enriched prompt, assembled image prompt, redirected `--config` settings) goes to stdout.
+- Diagnostics — dry-run settings, spinners, verbose timing, errors — go to stderr.
+- Interactive forms (`prompter --config` on a TTY, help) never write machine output to stdout.
+
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success, including `--dry-run`, help, and version output. |
+| `1` | Runtime or input failure, including missing input on a bare non-interactive run. |
+| `2` | Usage failure: unknown flag, operation collision, positional input with `--config`, or a retired command word. |
+| `130` | Canceled with SIGINT. |
+
+Always check the exit status; a nonzero code means stdout must not be trusted.
+
+## Image operation JSON
+
+`--image --json` emits one JSON object per result with the subject, selected modifiers, profile, and full prompt text:
 
 ```bash
-GOWORK=off go run . image "desert observatory" --json
+prompter --image "portrait of a clockmaker" --count 2 --json | jq -r '.[].full_prompt'
 ```
 
-With the default `--count 1`, it prints one JSON object containing the assembled prompt and its selected components. With `--count N` for `N > 1`, it prints a JSON array. The same image assembly that produces text output produces these objects; it does not contact a provider.
+The JSON schema is stable: parse it with any JSON tool. With `--count` greater than 1, the array holds one object per variation. The same seed and subject produce the same output.
 
-## Standard streams and exit codes
+## Streaming caveat
 
-Remote generated text and image results are written to standard output. Errors and verbose timing are written to standard error. Prompter exits `0` on success, `1` for runtime, configuration, validation, or provider errors, `2` for command-line syntax or command errors, and `130` after cancellation.
+`--stream` writes tokens to stdout as they arrive. If the call fails after streaming has begun, partial text may already be on stdout while the process exits nonzero. In automation, prefer the default buffered call, or discard captured streamed output on a nonzero exit.
 
-When standard input is piped with no command, Prompter defaults to `refine`. Interactive bare `prompter` prints usage. Use an explicit command in scripts so a future reader can see the intended operation.
+## Recommended pipeline patterns
 
-## Capture safely
-
-The following source-checked, unexecuted example captures only standard output:
+Buffer a result before using it:
 
 ```bash
-result="$(prompter refine "normalize this prompt")"
+out=$(prompter refine --file notes.md) || exit $?
+printf '%s\n' "$out"
 ```
 
-It can make a remote provider request. Check the exit status before using `result`. With `--stream`, Prompter can write partial text before a provider reports an incomplete terminal state, so discard captured stream output after any nonzero exit.
+Record diagnostics separately from output:
 
-`--output` is a buffered-output feature: it writes the result to its named file and standard output. It cannot be combined with `--stream`. `--dry-run` writes resolved-setting diagnostics to standard error and does not make a provider request.
+```bash
+prompter refine "rough prompt" > result.md 2> refine.log
+```
 
-## Related docs
+Dry-run a configuration in CI before any provider call:
 
-- [Common tasks](common-tasks.md)
-- [CLI flags](flags.md)
-- [Prompt files](prompt-files.md)
-- [Troubleshooting](troubleshooting.md)
+```bash
+prompter refine --dry-run --provider groq > /dev/null
+```
+
+## Input limits
+
+Input from arguments, files, or stdin is capped at 1 MB; exceeding it exits 1. Timeout and retry behavior come from the configuration (`timeout`, `max_retries`).
+
+## Related pages
+
+- Flag reference: [CLI flags](flags.md)
+- Configuration precedence: [Configuration and local state](../README.md#configuration-and-local-state)

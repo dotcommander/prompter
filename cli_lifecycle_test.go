@@ -18,8 +18,8 @@ func TestExecutionPipelineMetadata(t *testing.T) {
 		wantStdout string
 		wantStderr string
 	}{
-		{name: "long help", args: []string{"--help"}, wantStderr: "Usage: prompter <command> [flags]"},
-		{name: "short help", args: []string{"-h"}, wantStderr: "Usage: prompter <command> [flags]"},
+		{name: "long help", args: []string{"--help"}, wantStderr: "Usage: prompter [flags] [input]"},
+		{name: "short help", args: []string{"-h"}, wantStderr: "Usage: prompter [flags] [input]"},
 		{name: "long version", args: []string{"--version"}, wantStdout: "prompter v"},
 		{name: "short version", args: []string{"-V"}, wantStdout: "prompter v"},
 	} {
@@ -38,16 +38,83 @@ func TestExecutionPipelineMetadata(t *testing.T) {
 	}
 }
 
-func TestExecutionPipelineCommandHelp(t *testing.T) {
+func TestExecutionPipelineOperationHelp(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		args       []string
+		wantStderr string
+	}{
+		{name: "image", args: []string{imageOperationFlag, "--help"}, wantStderr: "Usage: prompter --image"},
+		{name: "config", args: []string{configOperationFlag, "--help"}, wantStderr: "Usage: prompter --config"},
+		{name: "refine", args: []string{commandRefine, "--help"}, wantStderr: "Usage: prompter refine"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := execute(test.args, &stdout, &stderr); code != 0 {
+				t.Fatalf("execute(%q) code = %d, want 0", test.args, code)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), test.wantStderr) {
+				t.Fatalf("stderr = %q, want %q", stderr.String(), test.wantStderr)
+			}
+		})
+	}
+}
+
+func TestExecutionPipelineBareInvocation(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		interactive bool
+		wantCode    int
+		wantStderr  string
+	}{
+		{name: "interactive shows help", interactive: true, wantCode: 0, wantStderr: "Usage: prompter [flags] [input]"},
+		{name: "non-interactive requires input", interactive: false, wantCode: 1, wantStderr: "input required"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pipeline := newExecutionPipeline(context.Background(), nil, &bytes.Buffer{}, &bytes.Buffer{})
+			pipeline.stdinIsInteractive = func() bool { return test.interactive }
+
+			status := pipeline.metadata()
+			if status == nil {
+				t.Fatal("metadata() = nil, want a terminal status")
+			}
+			if status.code != test.wantCode {
+				t.Fatalf("metadata() code = %d, want %d", status.code, test.wantCode)
+			}
+			stderr := pipeline.stderr.(*bytes.Buffer).String()
+			if test.wantCode == 0 && !strings.Contains(stderr, test.wantStderr) {
+				t.Fatalf("stderr = %q, want %q", stderr, test.wantStderr)
+			}
+			if test.wantCode == 1 && (status.err == nil || !strings.Contains(status.err.Error(), test.wantStderr)) {
+				t.Fatalf("metadata() err = %v, want containing %q", status.err, test.wantStderr)
+			}
+		})
+	}
+}
+
+func TestExecutionPipelineRetiredCommandExitCode(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := execute([]string{commandImage, "--help"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("execute(image --help) code = %d, want 0", code)
+	if code := execute([]string{"critique", "some text"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("execute(critique) code = %d, want 2", code)
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want empty", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "Usage: prompter image") {
-		t.Fatalf("stderr = %q, want image usage", stderr.String())
+	if !strings.Contains(stderr.String(), "removed") {
+		t.Fatalf("stderr = %q, want migration notice", stderr.String())
+	}
+}
+
+func TestExecutionPipelineUnknownFlagExitCode(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := execute([]string{"--bogus-flag"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("execute(--bogus-flag) code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "flag provided but not defined") {
+		t.Fatalf("stderr = %q, want undefined flag error", stderr.String())
 	}
 }
 
@@ -74,26 +141,13 @@ func TestPrintResultPreservesFinalNewline(t *testing.T) {
 	}
 }
 
-func TestExecutionPipelineParseFailure(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	if code := execute([]string{"unknown"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("execute(unknown) code = %d, want 2", code)
-	}
-	if stdout.Len() != 0 {
-		t.Fatalf("stdout = %q, want empty", stdout.String())
-	}
-	if got := stderr.String(); got != "error: unknown command \"unknown\"\n" {
-		t.Fatalf("stderr = %q", got)
-	}
-}
-
 func TestCommandRequiresInput(t *testing.T) {
-	for _, command := range []string{commandRefine, commandCritique, commandApply, commandRewrite, commandImage} {
+	for _, command := range []string{commandRefine, commandImage} {
 		if !commandRequiresInput(command) {
 			t.Errorf("commandRequiresInput(%q) = false", command)
 		}
 	}
-	for _, command := range []string{commandBrowse, commandConfigure, commandModels, commandPrompts} {
+	for _, command := range []string{commandConfig, ""} {
 		if commandRequiresInput(command) {
 			t.Errorf("commandRequiresInput(%q) = true", command)
 		}

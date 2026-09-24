@@ -12,20 +12,11 @@ import (
 //go:embed prompts/enhance.md
 var defaultEnhancePrompt string
 
-//go:embed prompts/critique.md
-var defaultCritiquePrompt string
-
-//go:embed prompts/rewrite.md
-var defaultRewritePrompt string
-
 //go:embed prompts/components.json
 var defaultComponentsJSON string
 
 //go:embed prompts/styles
 var stylesFS embed.FS
-
-//go:embed prompts/starter prompts/starter-v*.sha256
-var starterFS embed.FS
 
 // resolveStyle returns the system prompt for the given style name.
 // Resolution order:
@@ -57,9 +48,6 @@ func resolveStyleFromDir(name, userStylesDir string) (string, error) {
 	// Fall back to embedded
 	data, err := stylesFS.ReadFile("prompts/styles/" + name + ".md")
 	if err != nil {
-		if slices.Contains(availableRewriteModes(), name) {
-			return "", fmt.Errorf("unknown style %q: %q is a rewrite mode (use 'prompter rewrite --mode %s') (valid styles: %s)", name, name, name, strings.Join(availableStyles(), ", "))
-		}
 		return "", fmt.Errorf("unknown style %q (valid: %s)", name, strings.Join(availableStyles(), ", "))
 	}
 	return string(data), nil
