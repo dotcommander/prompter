@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -536,8 +537,9 @@ func TestReadInput_FileSizeLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("readInput expected size error, got nil")
 	}
-	if !strings.Contains(err.Error(), "input exceeds") {
-		t.Fatalf("readInput error = %v, want input exceeds", err)
+	want := fmt.Sprintf("reading file input: input exceeds %d bytes (1 MB limit; split large inputs)", maxInputBytes)
+	if err.Error() != want {
+		t.Fatalf("readInput error = %q, want %q", err.Error(), want)
 	}
 }
 
