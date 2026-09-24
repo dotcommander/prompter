@@ -72,7 +72,7 @@ func isInteractiveTerminal(file terminalFile, detector func(uintptr) bool) bool 
 const maxInputBytes = 1 << 20 // 1 MB
 
 func inputTooLarge() error {
-	return fmt.Errorf("input exceeds %d bytes (1 MB limit; use --file or split large inputs)", maxInputBytes)
+	return fmt.Errorf("input exceeds %d bytes (1 MB limit; split large inputs)", maxInputBytes)
 }
 
 func readLimited(r io.Reader) (string, error) {
