@@ -290,14 +290,15 @@ func resolveProviderConfig(name string, fileCfg ProviderConfig, defaultCfg Provi
 func Load() (*Config, error) {
 	path := getConfigPath()
 
-	viper.SetEnvPrefix("PROMPTER")
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	viper.AutomaticEnv()
+	v := viper.New()
+	v.SetEnvPrefix("PROMPTER")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
 
 	configFileLoaded := false
 	if path != "" {
-		viper.SetConfigFile(path)
-		if err := viper.ReadInConfig(); err != nil {
+		v.SetConfigFile(path)
+		if err := v.ReadInConfig(); err != nil {
 			if !os.IsNotExist(err) {
 				var notFound viper.ConfigFileNotFoundError
 				if !strings.Contains(err.Error(), "no such file") && !errors.As(err, &notFound) {
@@ -311,7 +312,7 @@ func Load() (*Config, error) {
 
 	var cfgFile ConfigFile
 	if configFileLoaded {
-		if err := viper.Unmarshal(&cfgFile); err != nil {
+		if err := v.Unmarshal(&cfgFile); err != nil {
 			return nil, fmt.Errorf("parse config: %w", err)
 		}
 	}
@@ -405,7 +406,7 @@ func Load() (*Config, error) {
 	}
 
 	maxOutputTokens := cfgFile.MaxOutputTokens
-	maxOutputTokensExplicit := viper.IsSet("max_output_tokens")
+	maxOutputTokensExplicit := v.IsSet("max_output_tokens")
 	if envTokens := os.Getenv("PROMPTER_MAX_OUTPUT_TOKENS"); envTokens != "" {
 		var tokens int
 		if _, err := fmt.Sscanf(envTokens, "%d", &tokens); err == nil {
