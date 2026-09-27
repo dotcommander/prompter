@@ -30,6 +30,8 @@ On an interactive terminal, a bare run prints help instead.
 
 Remote enrichment resolves a provider; a missing API key or invalid ADC setup fails before any request when detectable, and otherwise the provider returns an authentication error. Configure credentials with `prompter --config` or environment variables, then re-run the dry run to confirm the resolved source.
 
+Gemini authentication errors name their cause: a missing `gcloud` executable lists every searched location, and a failed `gcloud` invocation reports its exit status and diagnostic output. IDEs and other GUI-launched subprocesses can inherit a minimal `PATH` without Homebrew; prompter also checks common gcloud install locations (`/opt/homebrew/bin`, `/usr/local/bin`, `/usr/local/google-cloud-sdk/bin`, `/usr/lib/google-cloud-sdk/bin`, `~/google-cloud-sdk/bin`), so ADC normally works there without a full shell `PATH`. To avoid the `gcloud` dependency entirely, point `gemini.base_url` (or `PROMPTER_GEMINI_BASE_URL`) at `https://generativelanguage.googleapis.com/v1` and set `GEMINI_API_KEY`.
+
 ## Streamed output looks truncated after a failure
 
 `--stream` writes tokens as they arrive. If the call fails mid-stream, partial text may be on stdout even though the exit code is nonzero. Discard streamed output after a nonzero exit; use the default buffered call in automation.

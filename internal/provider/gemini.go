@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"strings"
 )
 
@@ -114,18 +113,14 @@ func (p *geminiProvider) Name() string   { return "gemini" }
 func (p *geminiProvider) Model() string  { return p.model }
 func (p *geminiProvider) APIKey() string { return p.apiKey }
 
-func googleADCAccessToken(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "gcloud", "auth", "application-default", "print-access-token", "--scopes="+vertexADCScope, "--quiet")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("gemini authentication failed (Google ADC token resolution failed).\nTo use Gemini, do one of:\n  1. Provide an AI Studio key: export GEMINI_API_KEY=\"AIza...\"\n  2. Authenticate Google Cloud ADC: gcloud auth application-default login\n  3. Switch default provider: prompter configure (e.g. OpenAI, Groq)")
-	}
-	token := strings.TrimSpace(string(out))
-	if token == "" {
-		return "", errors.New("gemini authentication failed: access token was empty")
-	}
-	return token, nil
-}
+// geminiAuthRemediation lists the working remedies for a failed Vertex AI
+// authentication attempt. It is only shown on the ADC path: the AI Studio key
+// in remedy 2 requires the generativelanguage base_url, which never reaches
+// ADC token resolution.
+const geminiAuthRemediation = `To use Gemini, do one of:
+  1. Authenticate Google Cloud ADC: gcloud auth application-default login
+  2. Use the AI Studio endpoint with an API key: set gemini base_url (e.g. PROMPTER_GEMINI_BASE_URL) to https://generativelanguage.googleapis.com/v1 and export GEMINI_API_KEY="AIza..."
+  3. Switch default provider: prompter --config (e.g. OpenAI, Groq)`
 
 func isGenerativeLanguageEndpoint(baseURL string) bool {
 	parsed, err := url.Parse(baseURL)
@@ -139,7 +134,11 @@ func (p *geminiProvider) getAccessToken(ctx context.Context) (string, error) {
 	if p.apiKey != "" && p.apiKey != "adc" && !strings.HasPrefix(p.apiKey, "AIza") {
 		return p.apiKey, nil
 	}
-	return p.tokenResolver(ctx)
+	token, err := p.tokenResolver(ctx)
+	if err != nil {
+		return "", fmt.Errorf("gemini authentication failed (Google ADC token resolution failed): %w\n%s", err, geminiAuthRemediation)
+	}
+	return token, nil
 }
 
 func (p *geminiProvider) buildURL(streaming bool) string {
