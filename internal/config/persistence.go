@@ -25,6 +25,8 @@ type ConfigPatch struct {
 	Providers       map[string]ProviderPatch
 }
 
+// ProviderPatch records explicit per-provider assignments; nil pointers leave
+// persisted intent untouched.
 type ProviderPatch struct {
 	KeyEnv    *string
 	Model     *string
@@ -211,6 +213,8 @@ type CredentialStatus struct {
 	Unchecked bool
 }
 
+// CredentialStatus reports whether the named provider has a usable credential
+// and names its resolved source without exposing the value.
 func (cfg *Config) CredentialStatus(name string) CredentialStatus {
 	provider := cfg.Providers[name]
 	if name == "omlx" {

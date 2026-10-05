@@ -216,10 +216,6 @@ func DefaultProviders() map[string]ProviderConfig {
 	}
 }
 
-func resolveProviderConfig(name string, fileCfg ProviderConfig, defaultCfg ProviderConfig) ProviderConfig {
-	return resolveProvider(name, fileCfg, defaultCfg, nil)
-}
-
 func resolveProvider(name string, fileCfg ProviderConfig, defaultCfg ProviderConfig, origins map[string]string) ProviderConfig {
 	upper := strings.ToUpper(name)
 	res := fileCfg

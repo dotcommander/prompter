@@ -302,7 +302,7 @@ func TestClipboardPolicy(t *testing.T) {
 
 func TestSpinnerStopJoinsWorker(t *testing.T) {
 	var stderr bytes.Buffer
-	spinner := NewSpinner(slog.New(slog.NewTextHandler(io.Discard, nil)), "model", &stderr)
+	spinner := NewSpinner(slog.New(slog.DiscardHandler), "model", &stderr)
 	spinner.Start()
 	time.Sleep(110 * time.Millisecond)
 	spinner.Stop()

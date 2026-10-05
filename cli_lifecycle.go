@@ -96,7 +96,7 @@ func (p *executionPipeline) metadata() *executionStatus {
 		// non-input run fails with an input-required error instead of
 		// attempting a provider call.
 		if !p.stdinIsInteractive() {
-			return &executionStatus{code: 1, err: fmt.Errorf("input required: pass text, use --file <path>, or pipe stdin")}
+			return &executionStatus{code: 1, err: errors.New("input required: pass text, use --file <path>, or pipe stdin")}
 		}
 		printUsageTo(p.stderr)
 		return &executionStatus{}
