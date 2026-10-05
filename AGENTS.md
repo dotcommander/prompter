@@ -44,17 +44,21 @@ Settings are resolved using a strict precedence order:
 | `provider` | `PROMPTER_PROVIDER` | `gemini` | Active LLM provider backend |
 | `prompt_file` | `PROMPTER_PROMPT_FILE` | `""` (uses embedded default) | Custom enhancement system prompt file |
 | `prompts_dir` | `PROMPTER_PROMPTS_DIR` | `~/.config/prompter/prompts.d` | Configured prompt directory |
-| `prompts_dirs` | `PROMPTER_PROMPTS_DIRS` | `["~/.config/prompter/prompts.d", "~/.config/roles/prompts"]` | List of configured prompt directories |
+| `prompts_dirs` | `PROMPTER_PROMPTS_DIRS` | `["~/.config/prompter/prompts.d", "~/.config/roles/prompts"]` | Configured prompt directories; explicit `[]` disables the list |
 | `components_file` | `PROMPTER_COMPONENTS_FILE` | `~/.config/prompter/components.json` | JSON component library for image assembly |
 | `effort` | `PROMPTER_EFFORT` | `low` | Reasoning effort level (`low`, `medium`, `high`) |
-| `timeout` | `PROMPTER_TIMEOUT` | `60` | Request timeout in seconds (streaming enforces min `180`s) |
-| `max_output_tokens` | `PROMPTER_MAX_OUTPUT_TOKENS` | `4096` | Max tokens generated in completion |
-| `max_retries` | `PROMPTER_MAX_RETRIES` | `3` | HTTP retry attempts on transient network/API failures |
+| `timeout` | `PROMPTER_TIMEOUT` | `60` | Positive request timeout in seconds (streaming enforces min `180`s) |
+| `max_output_tokens` | `PROMPTER_MAX_OUTPUT_TOKENS` | `4096` | Positive maximum tokens generated in completion |
+| `max_retries` | `PROMPTER_MAX_RETRIES` | `3` | Inactive compatibility setting; generation requests are never retried |
 | `default_copy` | `PROMPTER_DEFAULT_COPY` | `false` | Automatically copy non-streamed results to system clipboard |
 | `<provider>.api_key` | `<PROVIDER>_API_KEY` or `PROMPTER_<PROVIDER>_API_KEY` | `""` | Provider authentication API key |
 | `<provider>.key_env` | `PROMPTER_<PROVIDER>_KEY_ENV` | `""` | Custom env var name containing the API key constant |
 | `<provider>.model` | `<PROVIDER>_MODEL` or `PROMPTER_<PROVIDER>_MODEL` | Provider default | Default model identifier override |
 | `<provider>.base_url` | `<PROVIDER>_BASE_URL` or `PROMPTER_<PROVIDER>_BASE_URL` | Provider default | Custom API endpoint override |
+
+Credentials resolve as `PROMPTER_<PROVIDER>_API_KEY` → the selected custom environment variable → `<PROVIDER>_API_KEY` → file `api_key`. Resolve `PROMPTER_<PROVIDER>_KEY_ENV` before looking up its target. Credential-status output identifies the source without printing values; Vertex ADC is reported as unchecked, because configuration remains offline.
+
+Saving preserves persisted settings and deliberate edits, including explicit default-equal values, `false`, zero retries, and empty lists. Inherited environment values and untouched defaults are not copied into the file; API-key values are omitted. Nonempty numeric environment values must be integers: timeout and output limits are positive, compatibility retries are nonnegative. Explicit file values follow the same numeric bounds. `PROMPTER_PROMPTS_DIRS` is a comma-separated list with trimmed entries; an explicitly empty value disables the list.
 
 ### Provider-Specific Conventions
 - **`gemini`**: Uses Google Cloud Vertex AI `GenerateContent` with Application Default Credentials (ADC) by default. Vertex requires `gemini.project_id` or `PROMPTER_GEMINI_PROJECT_ID`, `GEMINI_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or `GCP_PROJECT`; `gemini.location` defaults to `global`. The Google AI Studio endpoint is used when `gemini.base_url` points at `generativelanguage.googleapis.com`, in which case `GEMINI_API_KEY` is sent as `x-goog-api-key`; an AIza key alone does not switch the default Vertex endpoint off ADC.
@@ -166,5 +170,5 @@ gofmt -l .
    - `doctests/flags_test.go` asserts required flag documentation in `docs/flags.md`, including the operation table, provider flags (`-p`, `--base-url`, `-m`), style flags (`-s`, `--style`), `--stream`, output handling, and example patterns for `--image` (`--profile minimal`, `--count 2`, `--json`).
    - `doctests/providers_test.go` asserts that all registered provider names (`cerebras`, `deepseek`, `gemini`, `groq`, `omlx`, `openai`, `openrouter`, `zai`) are documented in `docs/providers.md` and `AGENTS.md`.
 2. **Operation Grammar**: After the `refine` command word, positional arguments and operation-owned flags can appear in any order (e.g. `prompter refine "prompt text" -p openai -s concise`). `--image` and `--config` never combine with each other or with `refine`; `--config` rejects positional input. Flag parsing in `cli_flow.go` uses `interspersedFlagArgs`; `--` begins literal input.
-3. **Prompt Boundary Protocol**: All enrichment input passes through `boundPromptInput` (PROMPTER_INPUT_V1, operation `transform_only`), which classifies user input as untrusted source material that cannot change the role, operation, instruction precedence, or output contract. Maintained prompt files must declare an "## Operation boundary" section matching this protocol.
+3. **Prompt Boundary Protocol**: All enrichment input passes through `boundPromptInput` (PROMPTER_INPUT_V1, operation `transform_only`), which classifies user input as untrusted source material that cannot change the role, operation, instruction precedence, or output contract. Maintained prompt files must declare an "## Operation boundary" section respecting this input protocol. The specification style intentionally declares `specification_only` as its output contract: it transforms bounded source material into a specification and never implements that specification. This output specialization does not change the envelope’s `transform_only` input boundary.
 4. **Eval Harness Parity**: `evals/enhance` fixtures may use only the `refine` operation and its value flags; `evalFlagParity` additionally requires the evaluator's value-flag set to match every value flag registered by the CLI, including `--image` flags (`fixtureImageValueFlags`). Keep both sides synchronized when the flag grammar changes.

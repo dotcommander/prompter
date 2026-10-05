@@ -62,6 +62,24 @@ type geminiPart struct {
 type geminiGenerateContentResponse struct {
 	Candidates     []geminiCandidate     `json:"candidates"`
 	PromptFeedback *geminiPromptFeedback `json:"promptFeedback,omitempty"`
+	Error          *GeminiStreamError    `json:"error,omitempty"`
+}
+
+// GeminiStreamError preserves a structured API error or prompt safety block.
+// Partial reports whether output was emitted before the event.
+type GeminiStreamError struct {
+	Code        int    `json:"code,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Message     string `json:"message,omitempty"`
+	BlockReason string `json:"-"`
+	Partial     bool   `json:"-"`
+}
+
+func (e *GeminiStreamError) Error() string {
+	if e.BlockReason != "" {
+		return fmt.Sprintf("gemini: prompt blocked: %s: %s (partial output=%t)", e.BlockReason, e.Message, e.Partial)
+	}
+	return fmt.Sprintf("gemini stream: API error %d %s: %s (partial output=%t)", e.Code, e.Status, e.Message, e.Partial)
 }
 
 type geminiCandidate struct {
@@ -141,13 +159,16 @@ func (p *geminiProvider) getAccessToken(ctx context.Context) (string, error) {
 	return token, nil
 }
 
-func (p *geminiProvider) buildURL(streaming bool) string {
+func (p *geminiProvider) buildURL(streaming bool, requestModel string) string {
+	model := requestModel
+	if model == "" {
+		model = p.model
+	}
 	method := ":generateContent"
 	if streaming {
 		method = ":streamGenerateContent?alt=sse"
 	}
 	if isGenerativeLanguageEndpoint(p.baseURL) {
-		model := p.model
 		if !strings.HasPrefix(model, "models/") {
 			model = "models/" + model
 		}
@@ -157,7 +178,7 @@ func (p *geminiProvider) buildURL(streaming bool) string {
 		p.baseURL,
 		url.PathEscape(p.projectID),
 		url.PathEscape(p.location),
-		url.PathEscape(p.model),
+		url.PathEscape(model),
 		method,
 	)
 }
@@ -233,7 +254,7 @@ func (p *geminiProvider) Call(ctx context.Context, req CallRequest) (string, err
 		return "", fmt.Errorf("gemini encode request: %w", err)
 	}
 
-	endpoint := p.buildURL(false)
+	endpoint := p.buildURL(false, req.Model)
 	resp, err := p.do(ctx, endpoint, body)
 	if err != nil {
 		return "", err
@@ -286,7 +307,7 @@ func (p *geminiProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 		return fmt.Errorf("gemini encode request: %w", err)
 	}
 
-	endpoint := p.buildURL(true)
+	endpoint := p.buildURL(true, req.Model)
 	resp, err := p.do(ctx, endpoint, body)
 	if err != nil {
 		return err
@@ -305,6 +326,7 @@ func (p *geminiProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64<<10), maxGeminiBodyBytes)
 	var wrote, completed bool
 	var terminalErr error
 	for scanner.Scan() {
@@ -338,6 +360,13 @@ func (p *geminiProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 			default:
 				terminalErr = newCompletionError(p.Name(), candidate.FinishReason, p.maxOutputTokens, wrote)
 			}
+		}
+		if chunk.Error != nil {
+			chunk.Error.Partial = wrote
+			return chunk.Error
+		}
+		if chunk.PromptFeedback != nil && chunk.PromptFeedback.BlockReason != "" {
+			return &GeminiStreamError{BlockReason: chunk.PromptFeedback.BlockReason, Message: chunk.PromptFeedback.BlockReasonMessage, Partial: wrote}
 		}
 	}
 

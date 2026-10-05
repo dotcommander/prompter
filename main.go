@@ -107,45 +107,53 @@ func readStdin() (string, error) {
 // -----------------------------------------------------------------------------
 
 type Spinner struct {
-	done     chan struct{}
-	stopOnce sync.Once
-	model    string
-	start    time.Time
-	logger   *slog.Logger
-	stderr   io.Writer
+	done      chan struct{}
+	finished  chan struct{}
+	startOnce sync.Once
+	stopOnce  sync.Once
+	model     string
+	start     time.Time
+	logger    *slog.Logger
+	stderr    io.Writer
 }
 
 func NewSpinner(logger *slog.Logger, model string, stderr io.Writer) *Spinner {
 	return &Spinner{
-		done:   make(chan struct{}),
-		model:  model,
-		start:  time.Now(),
-		logger: logger,
-		stderr: stderr,
+		done:     make(chan struct{}),
+		finished: make(chan struct{}),
+		model:    model,
+		start:    time.Now(),
+		logger:   logger,
+		stderr:   stderr,
 	}
 }
 
 func (s *Spinner) Start() {
-	go func() {
-		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-		i := 0
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-s.done:
-				return
-			case <-ticker.C:
-				elapsed := time.Since(s.start).Round(100 * time.Millisecond)
-				fmt.Fprintf(s.stderr, "\r%s %s %v", frames[i%len(frames)], s.model, elapsed)
-				i++
+	s.startOnce.Do(func() {
+		go func() {
+			defer close(s.finished)
+			frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+			i := 0
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-s.done:
+					return
+				case <-ticker.C:
+					elapsed := time.Since(s.start).Round(100 * time.Millisecond)
+					fmt.Fprintf(s.stderr, "\r%s %s %v", frames[i%len(frames)], s.model, elapsed)
+					i++
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
 func (s *Spinner) Stop() time.Duration {
 	s.stopOnce.Do(func() { close(s.done) })
+	s.startOnce.Do(func() { close(s.finished) })
+	<-s.finished
 	elapsed := time.Since(s.start)
 	fmt.Fprintf(s.stderr, "\r\033[K")
 	s.logger.Info("completed", "model", s.model, "duration", elapsed.Round(time.Millisecond))
@@ -188,7 +196,7 @@ func parseArgsTo(args []string, stderr io.Writer) (*flags, error) {
 	f := &flags{command: command}
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
+	fs.Usage = func() { printCommandUsageTo(stderr, command) }
 	registerFlags(fs, f)
 	if hasHelpFlag(fs, rest) {
 		printCommandUsageTo(stderr, command)
@@ -462,15 +470,8 @@ func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *sl
 			return err
 		}
 	}
-	if f.copy || cfg.DefaultCopy {
-		if err := copyToClipboard(result); err != nil {
-			if f.copy {
-				return err
-			}
-			logger.Debug("clipboard unavailable in headless environment", "error", err)
-		} else {
-			fmt.Fprintln(output.stderr, "Copied to clipboard")
-		}
+	if err := dispatchClipboard(result, f.copy, cfg.DefaultCopy, output.stderr, copyToClipboard); err != nil {
+		return err
 	}
 	printResult(output.stdout, result)
 	return nil
@@ -503,7 +504,7 @@ func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags
 		baseURL = redactURLUserinfo(baseURL)
 	}
 	fmt.Fprintf(w, "Base URL: %s\n", baseURL)
-	fmt.Fprintf(w, "Credential source: %s\n", dryRunCredentialSource(prov.Name(), providerConfig))
+	fmt.Fprintf(w, "Credential source: %s\n", cfg.CredentialStatus(prov.Name()).Source)
 	if prov.Name() == "gemini" {
 		fmt.Fprintf(w, "Project ID: %s\n", providerConfig.ProjectID)
 		fmt.Fprintf(w, "Location: %s\n", providerConfig.Location)
@@ -525,19 +526,6 @@ func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags
 	if f.output != "" {
 		fmt.Fprintf(w, "Output file: %s\n", f.output)
 	}
-}
-
-func dryRunCredentialSource(providerName string, providerConfig config.ProviderConfig) string {
-	if providerName == "gemini" && providerConfig.APIKey == "" {
-		return "google-adc"
-	}
-	if providerConfig.KeyEnv != "" {
-		return providerConfig.KeyEnv
-	}
-	if providerConfig.APIKey != "" {
-		return "config-or-" + defaultKeyEnvFor(providerName)
-	}
-	return defaultKeyEnvFor(providerName)
 }
 
 func runAssemble(f *flags, cfg *config.Config, output commandOutput) error {
@@ -603,11 +591,8 @@ func runAssemble(f *flags, cfg *config.Config, output commandOutput) error {
 			return err
 		}
 	}
-	if f.copy || cfg.DefaultCopy {
-		if err := copyToClipboard(result); err != nil {
-			return err
-		}
-		fmt.Fprintln(output.stderr, "Copied to clipboard")
+	if err := dispatchClipboard(result, f.copy, cfg.DefaultCopy, output.stderr, copyToClipboard); err != nil {
+		return err
 	}
 	printResult(output.stdout, result)
 	return nil
@@ -661,5 +646,21 @@ func copyToClipboard(text string) error {
 	if err := clipboard.WriteAll(text); err != nil {
 		return fmt.Errorf("clipboard write failed: %w", err)
 	}
+	return nil
+}
+
+// dispatchClipboard applies the same explicit and automatic copy policy to every operation.
+func dispatchClipboard(text string, explicit, automatic bool, stderr io.Writer, copy func(string) error) error {
+	if !explicit && !automatic {
+		return nil
+	}
+	if err := copy(text); err != nil {
+		if explicit {
+			return err
+		}
+		fmt.Fprintf(stderr, "warning: automatic clipboard copy failed: %v\n", err)
+		return nil
+	}
+	fmt.Fprintln(stderr, "Copied to clipboard")
 	return nil
 }

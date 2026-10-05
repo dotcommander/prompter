@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dotcommander/prompter/internal/config"
 )
@@ -257,5 +258,65 @@ func TestRunAssembleUsesProvidedOutput(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestOperationCollisionsIgnoreFlagValuesAndLiterals(t *testing.T) {
+	for _, args := range [][]string{{"--image", "--profile", "minimal", "refine"}, {"--image", "--count", "2", "refine"}, {"--config", "refine"}} {
+		if _, _, err := selectOperation(args); err == nil {
+			t.Fatalf("collision accepted: %v", args)
+		}
+	}
+	for _, args := range [][]string{{"--image", "--seed", "refine", "subject"}, {"--image", "--file", "refine"}, {"--image", "--", "refine"}, {"refine", "--file", "--image"}, {"refine", "--", "--config"}} {
+		if _, _, err := selectOperation(args); err != nil {
+			t.Fatalf("literal rejected: %v: %v", args, err)
+		}
+	}
+}
+
+func TestParserHelpEmitsExactlyOnce(t *testing.T) {
+	for _, value := range []string{"--help", "-h", "--help=true", "-h=true"} {
+		var stdout, stderr bytes.Buffer
+		if code := execute([]string{"refine", value}, &stdout, &stderr); code != 0 {
+			t.Fatalf("%s: exit %d", value, code)
+		}
+		if stdout.Len() != 0 || strings.Count(stderr.String(), "Usage:") != 1 {
+			t.Fatalf("%s: unexpected help output %q", value, stderr.String())
+		}
+	}
+}
+
+func TestClipboardPolicy(t *testing.T) {
+	failure := errors.New("clipboard unavailable")
+	for _, explicit := range []bool{false, true} {
+		var stderr bytes.Buffer
+		err := dispatchClipboard("prompt", explicit, true, &stderr, func(string) error { return failure })
+		if explicit && !errors.Is(err, failure) {
+			t.Fatal("explicit copy failure lost")
+		}
+		if !explicit && (err != nil || !strings.Contains(stderr.String(), "warning:")) {
+			t.Fatal("automatic copy failure policy incorrect")
+		}
+	}
+}
+
+func TestSpinnerStopJoinsWorker(t *testing.T) {
+	var stderr bytes.Buffer
+	spinner := NewSpinner(slog.New(slog.NewTextHandler(io.Discard, nil)), "model", &stderr)
+	spinner.Start()
+	time.Sleep(110 * time.Millisecond)
+	spinner.Stop()
+	before := stderr.String()
+	time.Sleep(110 * time.Millisecond)
+	if stderr.String() != before || !strings.HasSuffix(before, "\r\033[K") {
+		t.Fatal("spinner wrote after stop")
+	}
+	spinner.Stop()
+}
+
+func TestConfigCancelledStatus(t *testing.T) {
+	status := commandStatus(ErrConfigCancelled)
+	if status.code != 130 || !errors.Is(status.err, ErrConfigCancelled) {
+		t.Fatalf("cancellation status = %+v", status)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -13,6 +14,9 @@ import (
 // The shim receives gcloud arguments on its command line.
 func writeFakeGcloud(t *testing.T, dir, body string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix shell fixture; Windows invocation covered by native Windows fixture")
+	}
 	path := filepath.Join(dir, "gcloud")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
 		t.Fatalf("write fake gcloud: %v", err)

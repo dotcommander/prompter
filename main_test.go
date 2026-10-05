@@ -585,7 +585,7 @@ func TestPrintDryRun(t *testing.T) {
 		"Provider: groq",
 		"Model: model-b",
 		"Base URL: default",
-		"Credential source: GROQ_API_KEY",
+		"Credential source:",
 		"Command: refine",
 		"Style: code",
 		"Max output tokens: 4096",
@@ -617,15 +617,11 @@ func TestPrintDryRunDefaultStyle(t *testing.T) {
 }
 
 func TestDryRunCredentialSourceDoesNotExposeCredential(t *testing.T) {
-	t.Parallel()
-	if got := dryRunCredentialSource("groq", config.ProviderConfig{APIKey: "secret"}); got != "config-or-GROQ_API_KEY" {
-		t.Fatalf("standard credential source = %q", got)
-	}
-	if got := dryRunCredentialSource("groq", config.ProviderConfig{APIKey: "secret", KeyEnv: "CUSTOM_KEY"}); got != "CUSTOM_KEY" {
-		t.Fatalf("custom credential source = %q", got)
-	}
-	if got := dryRunCredentialSource("gemini", config.ProviderConfig{}); got != "google-adc" {
-		t.Fatalf("Gemini credential source = %q", got)
+	cfg := &config.Config{Providers: map[string]config.ProviderConfig{"groq": {APIKey: "private-value"}}}
+	var out strings.Builder
+	printDryRun(&out, provider.NewChat("groq", "private-value", "model", "http://test", 0), "model", &flags{command: commandRefine}, cfg, "input", time.Minute)
+	if strings.Contains(out.String(), "private-value") || !strings.Contains(out.String(), cfg.CredentialStatus("groq").Source) {
+		t.Fatalf("incorrect credential reporting: %s", out.String())
 	}
 }
 
@@ -1165,30 +1161,28 @@ func TestRunConfig(t *testing.T) {
 	}
 }
 
-func TestAuthKeyLine(t *testing.T) {
-	tests := []struct {
-		name     string
-		env      map[string]string
+func TestConfigurationCredentialSources(t *testing.T) {
+	for _, name := range []string{"GROQ_API_KEY", "PROMPTER_GROQ_API_KEY", "MY_KEY"} {
+		t.Setenv(name, "")
+	}
+	t.Setenv("MY_KEY", "test-value")
+	for _, test := range []struct {
 		provider string
 		settings config.ProviderConfig
-		want     string
+		source   string
 	}{
-		{name: "omlx is keyless", provider: "omlx", want: "Auth Key:          $OMLX_API_KEY (local server / keyless)"},
-		{name: "gemini key detected", env: map[string]string{"GEMINI_API_KEY": "AIza-test"}, provider: "gemini", want: "Auth Key:          $GEMINI_API_KEY (detected ✓)"},
-		{name: "gemini falls back to adc", env: map[string]string{"GEMINI_API_KEY": ""}, provider: "gemini", want: "Auth Key:          Google ADC (not checked)"},
-		{name: "default env detected", env: map[string]string{"GROQ_API_KEY": "gsk-test"}, provider: "groq", want: "Auth Key:          $GROQ_API_KEY (detected ✓)"},
-		{name: "default env missing", env: map[string]string{"GROQ_API_KEY": ""}, provider: "groq", want: "Auth Key:          $GROQ_API_KEY (not set ✗)"},
-		{name: "custom key env detected", env: map[string]string{"MY_KEY": "x"}, provider: "openai", settings: config.ProviderConfig{KeyEnv: "MY_KEY"}, want: "Auth Key:          $MY_KEY (detected ✓)"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			for key, value := range tt.env {
-				t.Setenv(key, value)
-			}
-			if got := authKeyLine(tt.provider, tt.settings); got != tt.want {
-				t.Fatalf("authKeyLine(%q) = %q, want %q", tt.provider, got, tt.want)
-			}
-		})
+		{"omlx", config.ProviderConfig{}, "not required"},
+		{"gemini", config.ProviderConfig{}, "application default credentials (unchecked)"},
+		{"groq", config.ProviderConfig{}, "not set"},
+		{"groq", config.ProviderConfig{APIKey: "file-value"}, "configured API key"},
+		{"groq", config.ProviderConfig{APIKey: "test-value", KeyEnv: "MY_KEY"}, "environment: MY_KEY"},
+	} {
+		cfg := &config.Config{Provider: test.provider, Providers: map[string]config.ProviderConfig{test.provider: test.settings}}
+		var out strings.Builder
+		printConfig(&out, cfg)
+		if !strings.Contains(out.String(), "Auth Key:          "+test.source) || strings.Contains(out.String(), "test-value") || strings.Contains(out.String(), "file-value") {
+			t.Fatalf("incorrect credential display: %s", out.String())
+		}
 	}
 }
 
@@ -1217,7 +1211,7 @@ func TestPrintConfigDoesNotClaimADCReadiness(t *testing.T) {
 	}
 	var out strings.Builder
 	printConfig(&out, cfg)
-	if strings.Contains(out.String(), "ready") || !strings.Contains(out.String(), "not checked") {
+	if strings.Contains(out.String(), "ready") || !strings.Contains(out.String(), "application default credentials (unchecked)") {
 		t.Fatalf("printConfig ADC status is misleading:\n%s", out.String())
 	}
 }

@@ -112,10 +112,12 @@ func (p *openAIProvider) APIKey() string { return p.apiKey }
 
 func (p *openAIProvider) buildParams(req CallRequest) responses.ResponseNewParams {
 	params := responses.ResponseNewParams{
-		Model:           shared.ResponsesModel(req.Model),
-		Instructions:    openai.String(req.SystemPrompt),
-		Input:           responses.ResponseNewParamsInputUnion{OfString: openai.String(req.UserPrompt)},
-		MaxOutputTokens: openai.Int(int64(p.maxOutputTokens)),
+		Model:        shared.ResponsesModel(req.Model),
+		Instructions: openai.String(req.SystemPrompt),
+		Input:        responses.ResponseNewParamsInputUnion{OfString: openai.String(req.UserPrompt)},
+	}
+	if p.maxOutputTokens > 0 {
+		params.MaxOutputTokens = openai.Int(int64(p.maxOutputTokens))
 	}
 	if supportsOpenAIReasoning(req.Model) {
 		params.Reasoning = shared.ReasoningParam{Effort: mapEffort(req.Effort)}
@@ -280,6 +282,12 @@ func (p *chatProvider) StreamCall(ctx context.Context, req CallRequest, w io.Wri
 	var terminalErr error
 	for stream.Next() {
 		chunk := stream.Current()
+		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+			if _, err := io.WriteString(w, chunk.Choices[0].Delta.Content); err != nil {
+				return fmt.Errorf("%s stream write: %w", p.name, err)
+			}
+			wrote = true
+		}
 		for _, choice := range chunk.Choices {
 			switch choice.FinishReason {
 			case "":
@@ -288,12 +296,6 @@ func (p *chatProvider) StreamCall(ctx context.Context, req CallRequest, w io.Wri
 			default:
 				terminalErr = newCompletionError(p.name, choice.FinishReason, p.maxOutputTokens, wrote)
 			}
-		}
-		if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-			if _, err := io.WriteString(w, chunk.Choices[0].Delta.Content); err != nil {
-				return fmt.Errorf("%s stream write: %w", p.name, err)
-			}
-			wrote = true
 		}
 	}
 	if err := stream.Err(); err != nil {

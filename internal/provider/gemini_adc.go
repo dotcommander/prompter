@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -29,6 +30,13 @@ func gcloudDefaultCandidates() []string {
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates, filepath.Join(home, "google-cloud-sdk", "bin", "gcloud"))
 	}
+	if runtime.GOOS == "windows" {
+		for _, root := range []string{os.Getenv("LOCALAPPDATA"), os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)")} {
+			if root != "" {
+				candidates = append(candidates, filepath.Join(root, "Google", "Cloud SDK", "google-cloud-sdk", "bin", "gcloud"))
+			}
+		}
+	}
 	return candidates
 }
 
@@ -44,8 +52,8 @@ func resolveGcloud(candidates []string) (string, error) {
 	searched = append(searched, "PATH")
 	for _, candidate := range candidates {
 		searched = append(searched, candidate)
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
-			return candidate, nil
+		if path := resolveGcloudCandidate(candidate, runtime.GOOS, os.Getenv("PATHEXT")); path != "" {
+			return path, nil
 		}
 	}
 	return "", fmt.Errorf("gcloud executable not found (searched %s)", strings.Join(searched, ", "))
@@ -59,7 +67,7 @@ func runGcloudADC(ctx context.Context, candidates []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.CommandContext(ctx, gcloudPath, "auth", "application-default", "print-access-token", "--scopes="+vertexADCScope, "--quiet")
+	cmd := gcloudCommand(ctx, gcloudPath, "auth", "application-default", "print-access-token", "--scopes="+vertexADCScope, "--quiet")
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -96,4 +104,36 @@ func gcloudStderrDetail(stderr []byte) string {
 // googleADCAccessToken resolves a Google ADC bearer token for Vertex AI.
 func googleADCAccessToken(ctx context.Context) (string, error) {
 	return runGcloudADC(ctx, gcloudDefaultCandidates())
+}
+
+// resolveGcloudCandidate applies native executable rules; platform is explicit
+// so Windows extension discovery can also be covered by portable fixtures.
+func resolveGcloudCandidate(candidate, platform, pathExt string) string {
+	if platform != "windows" {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate
+		}
+		return ""
+	}
+	if pathExt == "" {
+		pathExt = ".COM;.EXE;.BAT;.CMD"
+	}
+	extensions := strings.Split(strings.ToLower(pathExt), ";")
+	ext := strings.ToLower(filepath.Ext(candidate))
+	for _, extension := range extensions {
+		extension = strings.TrimSpace(extension)
+		if extension == "" || !strings.HasPrefix(extension, ".") {
+			continue
+		}
+		path := candidate
+		if ext == "" {
+			path += extension
+		} else if ext != extension {
+			continue
+		}
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
+	return ""
 }

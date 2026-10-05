@@ -32,6 +32,20 @@ func clearAllProviderEnvVars(t *testing.T) {
 		t.Setenv("PROMPTER_"+name+"_API_KEY", "")
 		t.Setenv("PROMPTER_"+name+"_MODEL", "")
 		t.Setenv("PROMPTER_"+name+"_BASE_URL", "")
+		selector := "PROMPTER_" + name + "_KEY_ENV"
+		// Selector absence differs from an explicit empty override, which clears
+		// a persisted custom selector. Register restoration before unsetting it.
+		previous, existed := os.LookupEnv(selector)
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv(selector, previous)
+			} else {
+				_ = os.Unsetenv(selector)
+			}
+		})
+		if err := os.Unsetenv(selector); err != nil {
+			t.Fatalf("unset provider selector: %v", err)
+		}
 	}
 	t.Setenv("PROMPTER_PROVIDER", "")
 	t.Setenv("GEMINI_PROJECT_ID", "")
@@ -43,6 +57,7 @@ func clearAllProviderEnvVars(t *testing.T) {
 }
 
 func TestLoad(t *testing.T) {
+	clearAllProviderEnvVars(t)
 	tests := []struct {
 		name          string
 		content       string
@@ -82,7 +97,8 @@ func TestLoad(t *testing.T) {
 			wantDefaults:  true,
 		},
 		{name: "invalid JSON", content: `{invalid json`, wantErr: true},
-		{name: "missing provider", content: `{"openai":{"model":"gpt-5.6-luna"}}`, wantErr: true},
+		{name: "omitted provider", content: `{"openai":{"model":"gpt-5.6-luna"}}`, wantDefaults: true},
+		{name: "explicit empty provider", content: `{"provider":""}`, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -100,7 +116,7 @@ func TestLoad(t *testing.T) {
 			}
 			for name, want := range tt.wantProviders {
 				if got := cfg.Providers[name]; !reflect.DeepEqual(got, want) {
-					t.Errorf("Providers[%q] = %+v, want %+v", name, got, want)
+					t.Errorf("Providers[%q] does not match the expected fixture fields", name)
 				}
 			}
 			if len(cfg.Providers) != 8 {
@@ -192,10 +208,10 @@ func TestLoadStandardEnvironmentVariables(t *testing.T) {
 		t.Errorf("Provider = %q, want groq", cfg.Provider)
 	}
 	if cfg.Providers["openai"].APIKey != "sk-direct-openai" {
-		t.Errorf("openai APIKey = %q, want sk-direct-openai", cfg.Providers["openai"].APIKey)
+		t.Error("openai APIKey does not match the expected environment fixture")
 	}
 	if cfg.Providers["groq"].APIKey != "gsk-direct-groq" {
-		t.Errorf("groq APIKey = %q, want gsk-direct-groq", cfg.Providers["groq"].APIKey)
+		t.Error("groq APIKey does not match the expected environment fixture")
 	}
 }
 
@@ -248,7 +264,7 @@ func TestLoadEnvironmentOverridesLegacyProviderFields(t *testing.T) {
 	}
 	for _, name := range []string{"openai", "cerebras", "groq", "openrouter", "zai", "gemini", "omlx"} {
 		if got, want := cfg.Providers[name].APIKey, name+"-env-key"; got != want {
-			t.Errorf("%s APIKey = %q, want %q", name, got, want)
+			t.Errorf("%s APIKey does not match the expected environment fixture", name)
 		}
 	}
 	if got := cfg.Providers["gemini"].ProjectID; got != "env-project" {
@@ -315,6 +331,7 @@ func TestLoadDefaultCopy(t *testing.T) {
 }
 
 func TestSaveConfigAndKeyEnv(t *testing.T) {
+	clearAllProviderEnvVars(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -353,7 +370,7 @@ func TestSaveConfigAndKeyEnv(t *testing.T) {
 		t.Errorf("loaded.Provider = %q, want groq", loaded.Provider)
 	}
 	if loaded.Providers["groq"].APIKey != "gsk-custom-secret" {
-		t.Errorf("loaded.Providers[groq].APIKey = %q, want gsk-custom-secret", loaded.Providers["groq"].APIKey)
+		t.Error("loaded groq APIKey does not match the expected custom environment fixture")
 	}
 	if loaded.Providers["groq"].Model != "custom-groq-model" {
 		t.Errorf("loaded.Providers[groq].Model = %q, want custom-groq-model", loaded.Providers["groq"].Model)

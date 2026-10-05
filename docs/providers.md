@@ -42,8 +42,14 @@ Current behavior:
 - For third-party OpenAI-compatible servers (vLLM, Ollama, LocalAI) that expose `/v1/chat/completions`, use `-p omlx` with `--base-url <url>` (no API key required).
 - Unknown provider names fail fast with a clear error from `resolveProvider`.
 
-Configuration values are loaded from standard environment variables (`<PROVIDER>_API_KEY`),
-`PROMPTER_<PROVIDER>_*` variables, or an optional JSON block per provider. After those values are merged,
+Configuration fields resolve from environment variables before an optional JSON block per provider. For model and endpoint fields, `PROMPTER_<PROVIDER>_*` takes precedence over the corresponding standard variable. Credentials resolve in this order:
+
+1. `PROMPTER_<PROVIDER>_API_KEY`.
+2. The variable selected by `key_env` (with `PROMPTER_<PROVIDER>_KEY_ENV` overriding the file selector).
+3. `<PROVIDER>_API_KEY`.
+4. The file `api_key`.
+
+`key_env` stores a variable name, never an API-key value. The form validates names and rejects recognizable credential-shaped input. Configuration output and the form report credential sources without values; Vertex ADC is unchecked until a provider request needs it. Saved configuration omits API-key values. After the fields are merged,
 `config.Load` normalizes the eight closed provider blocks into `Config.Providers`.
 
 `resolveProvider` copies those values into `provider.ProviderSettings`, applies a
@@ -76,7 +82,7 @@ Built-in model defaults:
 - `gemini`: `gemini-3.7-flash`
 - `omlx`: `Ornith-1.5-35B-A3B-oQ4e-mtp`
 
-Set a model explicitly in provider configuration or with `--model` during enrichment.
+Set a model explicitly in provider configuration or with `--model` during enrichment. Gemini honors the request model for both Vertex and AI Studio, including streaming; an empty request model uses the configured model.
 `prompter --config` presents local model choices in interactive mode; it does not
 fetch model catalogs. The OMLX provider uses the configured local server endpoint
 when invoked.
@@ -96,6 +102,9 @@ when invoked.
 - `gemini.location` defaults to `global`.
 - `gemini.model` defaults to `gemini-3.7-flash`.
 - Streaming and reasoning effort (`thinkingConfig`) are supported.
+- The offline configuration form includes project and location fields. AI Studio does not require a Vertex project; select it with a base URL whose host is `generativelanguage.googleapis.com`.
+
+Generation requests are never automatically retried, including transient HTTP errors and ambiguous network outcomes. `max_retries` / `PROMPTER_MAX_RETRIES` remains an inactive compatibility setting (default `3`, nonnegative integers including `0`); changing it does not enable generation replay.
 
 To add a provider:
 

@@ -153,7 +153,7 @@ func selectOperation(args []string) (string, []string, error) {
 		if containsControlFlag(operationFlagSet(commandImage), rest, configOperationFlag) {
 			return "", nil, fmt.Errorf("%s and %s cannot be combined", imageOperationFlag, configOperationFlag)
 		}
-		if len(rest) > 0 && rest[0] == commandRefine {
+		if containsControlFlag(operationFlagSet(commandImage), rest, commandRefine) {
 			return "", nil, fmt.Errorf("%s cannot be combined with %q; use %q to pass literal input", imageOperationFlag, commandRefine, "--")
 		}
 		return commandImage, rest, nil
@@ -162,8 +162,8 @@ func selectOperation(args []string) (string, []string, error) {
 		if containsControlFlag(operationFlagSet(commandConfig), rest, imageOperationFlag) {
 			return "", nil, fmt.Errorf("%s and %s cannot be combined", imageOperationFlag, configOperationFlag)
 		}
-		if len(rest) > 0 && rest[0] == commandRefine {
-			return "", nil, fmt.Errorf("%s cannot be combined with %q; use %q to pass literal input", configOperationFlag, commandRefine, "--")
+		if containsControlFlag(operationFlagSet(commandConfig), rest, commandRefine) {
+			return "", nil, fmt.Errorf("%s cannot be combined with %q; configuration accepts no input arguments", configOperationFlag, commandRefine)
 		}
 		return commandConfig, rest, nil
 	case "--help", "-h", "--version", "-V":

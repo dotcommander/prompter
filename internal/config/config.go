@@ -2,14 +2,13 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
-
-	"github.com/spf13/viper"
 )
 
 // Config holds the resolved configuration used at runtime.
@@ -25,13 +24,17 @@ type Config struct {
 	// MaxOutputTokensExplicit records whether config/env explicitly set
 	// max_output_tokens before Load applied the default.
 	MaxOutputTokensExplicit bool
-	MaxRetries              int // HTTP retry count; <=0 = use default (3)
+	MaxRetries              int // Compatibility setting; generation replay remains disabled.
 	DefaultCopy             bool
 
 	// Cached system prompt loaded once at startup.
 	SystemPrompt string `json:"-"`
 
 	Providers map[string]ProviderConfig
+	persisted map[string]any
+	baseline  map[string]any
+	explicit  map[string]any
+	origins   map[string]string
 }
 
 // ProviderConfig holds the per-provider fields from the config file.
@@ -94,7 +97,7 @@ func expandPath(path string) string {
 		}
 		return path
 	}
-	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, "~\\") {
+	if strings.HasPrefix(path, "~/") || (runtime.GOOS == "windows" && strings.HasPrefix(path, "~\\")) {
 		home, err := os.UserHomeDir()
 		if err == nil {
 			return filepath.Join(home, filepath.FromSlash(path[2:]))
@@ -120,7 +123,9 @@ func unexpandPath(path string) string {
 	if path == "" {
 		return ""
 	}
+	path = filepath.Clean(path)
 	home, err := os.UserHomeDir()
+	home = filepath.Clean(home)
 	if err != nil || home == "" {
 		return path
 	}
@@ -212,294 +217,206 @@ func DefaultProviders() map[string]ProviderConfig {
 }
 
 func resolveProviderConfig(name string, fileCfg ProviderConfig, defaultCfg ProviderConfig) ProviderConfig {
+	return resolveProvider(name, fileCfg, defaultCfg, nil)
+}
+
+func resolveProvider(name string, fileCfg ProviderConfig, defaultCfg ProviderConfig, origins map[string]string) ProviderConfig {
 	upper := strings.ToUpper(name)
 	res := fileCfg
-
-	// APIKey resolution:
-	// 1. PROMPTER_<PROVIDER>_API_KEY
-	// 2. Explicit key_env (e.g. key_env: "MY_KEY" -> os.Getenv("MY_KEY"))
-	// 3. Explicit fileCfg.APIKey
-	// 4. Standard <PROVIDER>_API_KEY
-	// 5. defaultCfg.APIKey
-	if env := os.Getenv("PROMPTER_" + upper + "_API_KEY"); env != "" {
-		res.APIKey = env
-	} else if res.KeyEnv != "" && os.Getenv(res.KeyEnv) != "" {
-		res.APIKey = os.Getenv(res.KeyEnv)
-	} else if res.APIKey == "" {
-		if env := os.Getenv(upper + "_API_KEY"); env != "" {
-			res.APIKey = env
-		} else {
-			res.APIKey = defaultCfg.APIKey
+	resolve := func(field, file, fallback string, envs ...string) string {
+		for _, env := range envs {
+			if value := os.Getenv(env); value != "" {
+				if origins != nil {
+					origins[name+"."+field] = "environment: " + safeEnvName(env)
+				}
+				return value
+			}
+		}
+		if file != "" {
+			if origins != nil {
+				origins[name+"."+field] = "config file"
+			}
+			return file
+		}
+		if origins != nil {
+			origins[name+"."+field] = "built-in default"
+		}
+		return fallback
+	}
+	// Resolve the selector before looking up its selected environment variable.
+	res.KeyEnv = fileCfg.KeyEnv
+	if origins != nil {
+		origins[name+".key_env"] = "built-in default"
+		if fileCfg.KeyEnv != "" {
+			origins[name+".key_env"] = "config file"
 		}
 	}
-
-	// Model
-	if env := os.Getenv("PROMPTER_" + upper + "_MODEL"); env != "" {
-		res.Model = env
-	} else if res.Model == "" {
-		if env := os.Getenv(upper + "_MODEL"); env != "" {
-			res.Model = env
-		} else {
-			res.Model = defaultCfg.Model
+	if selector, exists := os.LookupEnv("PROMPTER_" + upper + "_KEY_ENV"); exists {
+		res.KeyEnv = selector
+		if origins != nil {
+			origins[name+".key_env"] = "environment: PROMPTER_" + upper + "_KEY_ENV"
 		}
 	}
-
-	// BaseURL
-	if env := os.Getenv("PROMPTER_" + upper + "_BASE_URL"); env != "" {
-		res.BaseURL = env
-	} else if res.BaseURL == "" {
-		if env := os.Getenv(upper + "_BASE_URL"); env != "" {
-			res.BaseURL = env
-		} else {
-			res.BaseURL = defaultCfg.BaseURL
-		}
-	}
-
-	// Gemini-specific project_id & location
+	res.APIKey = resolve("api_key", fileCfg.APIKey, defaultCfg.APIKey, "PROMPTER_"+upper+"_API_KEY", res.KeyEnv, upper+"_API_KEY")
+	res.Model = resolve("model", fileCfg.Model, defaultCfg.Model, "PROMPTER_"+upper+"_MODEL", upper+"_MODEL")
+	res.BaseURL = resolve("base_url", fileCfg.BaseURL, defaultCfg.BaseURL, "PROMPTER_"+upper+"_BASE_URL", upper+"_BASE_URL")
 	if name == "gemini" {
-		if env := os.Getenv("PROMPTER_GEMINI_PROJECT_ID"); env != "" {
-			res.ProjectID = env
-		} else if res.ProjectID == "" {
-			if env := os.Getenv("GEMINI_PROJECT_ID"); env != "" {
-				res.ProjectID = env
-			} else if env := os.Getenv("GOOGLE_CLOUD_PROJECT"); env != "" {
-				res.ProjectID = env
-			} else if env := os.Getenv("GCP_PROJECT"); env != "" {
-				res.ProjectID = env
-			} else {
-				res.ProjectID = defaultCfg.ProjectID
-			}
-		}
-
-		if env := os.Getenv("PROMPTER_GEMINI_LOCATION"); env != "" {
-			res.Location = env
-		} else if res.Location == "" {
-			if env := os.Getenv("GEMINI_LOCATION"); env != "" {
-				res.Location = env
-			} else {
-				res.Location = defaultCfg.Location
-			}
-		}
+		res.ProjectID = resolve("project_id", fileCfg.ProjectID, defaultCfg.ProjectID, "PROMPTER_GEMINI_PROJECT_ID", "GEMINI_PROJECT_ID", "GOOGLE_CLOUD_PROJECT", "GCP_PROJECT")
+		res.Location = resolve("location", fileCfg.Location, defaultCfg.Location, "PROMPTER_GEMINI_LOCATION", "GEMINI_LOCATION")
 	}
-
 	return res
 }
 
-// Load reads and parses the config file if present, returning a populated Config.
-// If the config file does not exist, safe defaults and environment variables are used.
+// Load resolves environment over persisted settings over built-in defaults.
+// Presence is retained separately so empty lists and explicit zero remain intent.
 func Load() (*Config, error) {
-	path := getConfigPath()
-
-	v := viper.New()
-	v.SetEnvPrefix("PROMPTER")
-	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	v.AutomaticEnv()
-
-	configFileLoaded := false
-	if path != "" {
-		v.SetConfigFile(path)
-		if err := v.ReadInConfig(); err != nil {
-			if !os.IsNotExist(err) {
-				var notFound viper.ConfigFileNotFoundError
-				if !strings.Contains(err.Error(), "no such file") && !errors.As(err, &notFound) {
-					return nil, fmt.Errorf("read config: %w", err)
-				}
+	persisted := map[string]any{}
+	var file ConfigFile
+	loaded := false
+	if path := getConfigPath(); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read config: %w", err)
+		}
+		if err == nil {
+			loaded = true
+			if err := json.Unmarshal(data, &file); err != nil {
+				return nil, fmt.Errorf("parse config: %w", err)
 			}
-		} else {
-			configFileLoaded = true
+			if err := json.Unmarshal(data, &persisted); err != nil {
+				return nil, fmt.Errorf("parse config: %w", err)
+			}
+			if persisted == nil {
+				return nil, fmt.Errorf("parse config: expected object")
+			}
 		}
 	}
-
-	var cfgFile ConfigFile
-	if configFileLoaded {
-		if err := v.Unmarshal(&cfgFile); err != nil {
-			return nil, fmt.Errorf("parse config: %w", err)
+	cfg := &Config{persisted: persisted, origins: map[string]string{}}
+	stringValue := func(field, env, value, fallback string) string {
+		if v := os.Getenv(env); v != "" {
+			cfg.origins[field] = "environment: " + env
+			return v
+		}
+		if _, exists := persisted[field]; exists {
+			cfg.origins[field] = "config file"
+			if value != "" || fallback == "" {
+				return value
+			}
+		}
+		cfg.origins[field] = "built-in default"
+		return fallback
+	}
+	cfg.Provider = stringValue("provider", "PROMPTER_PROVIDER", file.Provider, "")
+	_, providerPresent := persisted["provider"]
+	if loaded && providerPresent && cfg.Provider == "" {
+		return nil, fmt.Errorf("config: provider must not be empty")
+	}
+	if cfg.Provider == "" {
+		cfg.Provider = detectDefaultProvider()
+		for _, env := range []string{"PROMPTER_" + strings.ToUpper(cfg.Provider) + "_API_KEY", strings.ToUpper(cfg.Provider) + "_API_KEY"} {
+			if os.Getenv(env) != "" {
+				cfg.origins["provider"] = "environment: " + env
+				break
+			}
 		}
 	}
-
-	providerName := cfgFile.Provider
-	if envProvider := os.Getenv("PROMPTER_PROVIDER"); envProvider != "" {
-		providerName = envProvider
+	cfg.PromptFile = expandPath(stringValue("prompt_file", "PROMPTER_PROMPT_FILE", file.PromptFile, ""))
+	cfg.PromptsDir = expandPath(stringValue("prompts_dir", "PROMPTER_PROMPTS_DIR", file.PromptsDir, "~/.config/prompter/prompts.d"))
+	cfg.ComponentsFile = expandPath(stringValue("components_file", "PROMPTER_COMPONENTS_FILE", file.ComponentsFile, "~/.config/prompter/components.json"))
+	cfg.Effort = stringValue("effort", "PROMPTER_EFFORT", file.Effort, "low")
+	if !slices.Contains(validEfforts, cfg.Effort) {
+		return nil, fmt.Errorf("invalid effort %q: must be low, medium, or high", cfg.Effort)
 	}
-	if configFileLoaded && providerName == "" {
-		return nil, fmt.Errorf("config missing: provider")
-	}
-	if providerName == "" {
-		providerName = detectDefaultProvider()
-	}
-
-	defaults := DefaultProviders()
-	fileProviders := map[string]ProviderConfig{
-		"openai":     cfgFile.OpenAI,
-		"cerebras":   cfgFile.Cerebras,
-		"deepseek":   cfgFile.DeepSeek,
-		"groq":       cfgFile.Groq,
-		"openrouter": cfgFile.OpenRouter,
-		"zai":        cfgFile.Zai,
-		"gemini":     cfgFile.Gemini,
-		"omlx":       cfgFile.Omlx,
-	}
-
-	providers := make(map[string]ProviderConfig, len(defaults))
-	for name, defCfg := range defaults {
-		var fCfg ProviderConfig
-		if configFileLoaded {
-			fCfg = fileProviders[name]
-		}
-		providers[name] = resolveProviderConfig(name, fCfg, defCfg)
-	}
-
-	promptFile := cfgFile.PromptFile
-	if envPromptFile := os.Getenv("PROMPTER_PROMPT_FILE"); envPromptFile != "" {
-		promptFile = envPromptFile
-	}
-
-	promptsDir := cfgFile.PromptsDir
-	if envPromptsDir := os.Getenv("PROMPTER_PROMPTS_DIR"); envPromptsDir != "" {
-		promptsDir = envPromptsDir
-	}
-	if promptsDir == "" {
-		promptsDir = expandPath("~/.config/prompter/prompts.d")
-	}
-
-	promptsDirs := cfgFile.PromptsDirs
-	if len(promptsDirs) == 0 {
-		promptsDirs = []string{
-			expandPath("~/.config/prompter/prompts.d"),
-			expandPath("~/.config/roles/prompts"),
-		}
+	if env, exists := os.LookupEnv("PROMPTER_PROMPTS_DIRS"); exists {
+		cfg.PromptsDirs = expandPaths(strings.Split(env, ","))
+		cfg.origins["prompts_dirs"] = "environment: PROMPTER_PROMPTS_DIRS"
+	} else if _, exists := persisted["prompts_dirs"]; exists {
+		cfg.PromptsDirs = expandPaths(file.PromptsDirs)
+		cfg.origins["prompts_dirs"] = "config file"
 	} else {
-		promptsDirs = expandPaths(promptsDirs)
+		cfg.PromptsDirs = expandPaths([]string{"~/.config/prompter/prompts.d", "~/.config/roles/prompts"})
+		cfg.origins["prompts_dirs"] = "built-in default"
 	}
-
-	componentsFile := cfgFile.ComponentsFile
-	if envCompFile := os.Getenv("PROMPTER_COMPONENTS_FILE"); envCompFile != "" {
-		componentsFile = envCompFile
+	number := func(field, env string, value, fallback, minimum int) (int, error) {
+		_, present := persisted[field]
+		cfg.origins[field] = "built-in default"
+		if !present {
+			value = fallback
+		} else {
+			cfg.origins[field] = "config file"
+		}
+		if text, exists := os.LookupEnv(env); exists && text != "" {
+			parsed, err := strconv.Atoi(text)
+			if err != nil {
+				return 0, fmt.Errorf("config: %s must be an integer", env)
+			}
+			value = parsed
+			present = true
+			cfg.origins[field] = "environment: " + env
+		}
+		if value < minimum {
+			return 0, fmt.Errorf("config: %s must be >= %d", field, minimum)
+		}
+		if field == "max_output_tokens" {
+			cfg.MaxOutputTokensExplicit = present
+		}
+		return value, nil
 	}
-	if componentsFile == "" {
-		componentsFile = expandPath("~/.config/prompter/components.json")
+	var err error
+	if cfg.Timeout, err = number("timeout", "PROMPTER_TIMEOUT", file.Timeout, DefaultTimeout, 1); err != nil {
+		return nil, err
 	}
-
-	effort := cfgFile.Effort
-	if envEffort := os.Getenv("PROMPTER_EFFORT"); envEffort != "" {
-		effort = envEffort
+	if cfg.MaxOutputTokens, err = number("max_output_tokens", "PROMPTER_MAX_OUTPUT_TOKENS", file.MaxOutputTokens, DefaultMaxOutputTokens, 1); err != nil {
+		return nil, err
 	}
-	if effort == "" {
-		effort = "low"
+	if cfg.MaxRetries, err = number("max_retries", "PROMPTER_MAX_RETRIES", file.MaxRetries, DefaultMaxRetries, 0); err != nil {
+		return nil, err
 	}
-	if !slices.Contains(validEfforts, effort) {
-		return nil, fmt.Errorf("invalid effort %q: must be low, medium, or high", effort)
+	cfg.DefaultCopy = file.DefaultCopy
+	cfg.origins["default_copy"] = "built-in default"
+	if _, exists := persisted["default_copy"]; exists {
+		cfg.origins["default_copy"] = "config file"
 	}
-
-	timeout := cfgFile.Timeout
-	if envTimeout := os.Getenv("PROMPTER_TIMEOUT"); envTimeout != "" {
-		var t int
-		if _, err := fmt.Sscanf(envTimeout, "%d", &t); err == nil {
-			timeout = t
+	if text, exists := os.LookupEnv("PROMPTER_DEFAULT_COPY"); exists && text != "" {
+		cfg.origins["default_copy"] = "environment: PROMPTER_DEFAULT_COPY"
+		cfg.DefaultCopy, err = strconv.ParseBool(text)
+		if err != nil {
+			return nil, fmt.Errorf("config: PROMPTER_DEFAULT_COPY must be a boolean")
 		}
 	}
-	if timeout == 0 {
-		timeout = DefaultTimeout
+	files := map[string]ProviderConfig{"openai": file.OpenAI, "cerebras": file.Cerebras, "deepseek": file.DeepSeek, "groq": file.Groq, "openrouter": file.OpenRouter, "zai": file.Zai, "gemini": file.Gemini, "omlx": file.Omlx}
+	cfg.Providers = map[string]ProviderConfig{}
+	for name, defaults := range DefaultProviders() {
+		cfg.Providers[name] = resolveProvider(name, files[name], defaults, cfg.origins)
 	}
-	if timeout < 0 {
-		return nil, fmt.Errorf("config: timeout must be >= 0, got %d", timeout)
-	}
-
-	maxOutputTokens := cfgFile.MaxOutputTokens
-	maxOutputTokensExplicit := v.IsSet("max_output_tokens")
-	if envTokens := os.Getenv("PROMPTER_MAX_OUTPUT_TOKENS"); envTokens != "" {
-		var tokens int
-		if _, err := fmt.Sscanf(envTokens, "%d", &tokens); err == nil {
-			maxOutputTokens = tokens
-			maxOutputTokensExplicit = true
-		}
-	}
-	if maxOutputTokens <= 0 {
-		maxOutputTokens = DefaultMaxOutputTokens
-	}
-
-	maxRetries := cfgFile.MaxRetries
-	if envRetries := os.Getenv("PROMPTER_MAX_RETRIES"); envRetries != "" {
-		var retries int
-		if _, err := fmt.Sscanf(envRetries, "%d", &retries); err == nil {
-			maxRetries = retries
-		}
-	}
-	if maxRetries <= 0 {
-		maxRetries = DefaultMaxRetries
-	}
-
-	defaultCopy := cfgFile.DefaultCopy
-	if envCopy := os.Getenv("PROMPTER_DEFAULT_COPY"); envCopy != "" {
-		defaultCopy = strings.EqualFold(envCopy, "true") || envCopy == "1"
-	}
-
-	cfg := &Config{
-		Provider:                providerName,
-		PromptFile:              expandPath(promptFile),
-		PromptsDir:              expandPath(promptsDir),
-		PromptsDirs:             promptsDirs,
-		ComponentsFile:          expandPath(componentsFile),
-		Effort:                  effort,
-		Timeout:                 timeout,
-		MaxOutputTokens:         maxOutputTokens,
-		MaxOutputTokensExplicit: maxOutputTokensExplicit,
-		MaxRetries:              maxRetries,
-		DefaultCopy:             defaultCopy,
-		Providers:               providers,
-	}
-
+	cfg.baseline = cfg.snapshot()
 	return cfg, nil
 }
 
-// Save atomically replaces ~/.config/prompter/config.json with the resolved Config.
+// Save atomically stores deliberate changes without freezing inherited settings.
 func Save(cfg *Config) error {
+	if cfg == nil {
+		return fmt.Errorf("cannot save nil config")
+	}
 	path := getConfigPath()
 	if path == "" {
 		return fmt.Errorf("cannot determine home directory")
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-
-	cleanProvider := func(p ProviderConfig) ProviderConfig {
-		return ProviderConfig{
-			KeyEnv:    p.KeyEnv,
-			Model:     p.Model,
-			BaseURL:   p.BaseURL,
-			ProjectID: p.ProjectID,
-			Location:  p.Location,
-		}
-	}
-
-	cfgFile := ConfigFile{
-		Provider:        cfg.Provider,
-		PromptFile:      unexpandPath(cfg.PromptFile),
-		PromptsDir:      unexpandPath(cfg.PromptsDir),
-		PromptsDirs:     unexpandPaths(cfg.PromptsDirs),
-		ComponentsFile:  unexpandPath(cfg.ComponentsFile),
-		Effort:          cfg.Effort,
-		Timeout:         cfg.Timeout,
-		MaxOutputTokens: cfg.MaxOutputTokens,
-		MaxRetries:      cfg.MaxRetries,
-		DefaultCopy:     cfg.DefaultCopy,
-		OpenAI:          cleanProvider(cfg.Providers["openai"]),
-		Cerebras:        cleanProvider(cfg.Providers["cerebras"]),
-		DeepSeek:        cleanProvider(cfg.Providers["deepseek"]),
-		Groq:            cleanProvider(cfg.Providers["groq"]),
-		OpenRouter:      cleanProvider(cfg.Providers["openrouter"]),
-		Zai:             cleanProvider(cfg.Providers["zai"]),
-		Gemini:          cleanProvider(cfg.Providers["gemini"]),
-		Omlx:            cleanProvider(cfg.Providers["omlx"]),
-	}
-
-	data, err := json.MarshalIndent(cfgFile, "", "  ")
+	intent := cfg.persistenceIntent()
+	data, err := json.MarshalIndent(intent, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-
-	return writeConfigAtomically(path, append(data, '\n'), os.Rename)
+	if err := writeConfigAtomically(path, append(data, '\n'), os.Rename); err != nil {
+		return err
+	}
+	cfg.persisted = intent
+	cfg.baseline = cfg.snapshot()
+	cfg.explicit = nil
+	return nil
 }
 
 // writeConfigAtomically keeps the last complete config in place until a fully

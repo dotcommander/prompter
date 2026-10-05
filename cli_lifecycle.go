@@ -75,6 +75,9 @@ func (p *executionPipeline) run() int {
 	} {
 		if status := stage(p); status != nil {
 			if p.ctx.Err() != nil {
+				if errors.Is(status.err, ErrConfigCancelled) {
+					fmt.Fprintf(p.stderr, "error: %v\n", status.err)
+				}
 				return 130
 			}
 			if status.err != nil {
@@ -164,6 +167,9 @@ func (p *executionPipeline) executeCommand() *executionStatus {
 }
 
 func commandStatus(err error) *executionStatus {
+	if errors.Is(err, ErrConfigCancelled) {
+		return &executionStatus{code: 130, err: err}
+	}
 	if err != nil {
 		return &executionStatus{code: 1, err: err}
 	}

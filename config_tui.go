@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,36 +40,38 @@ func defaultProviderFor(p string) config.ProviderConfig {
 	return config.DefaultProviders()[p]
 }
 
+var ErrConfigCancelled = errors.New("configuration cancelled; no settings saved")
+
+var runConfigStep = func(form *huh.Form) error { return form.Run() }
+
+func configKeyMap() *huh.KeyMap {
+	keyMap := huh.NewDefaultKeyMap()
+	keyMap.Quit = key.NewBinding(key.WithKeys("ctrl+c"))
+	return keyMap
+}
+
+func configFormError(err error) error {
+	if errors.Is(err, huh.ErrUserAborted) {
+		return ErrConfigCancelled
+	}
+	return fmt.Errorf("config form: %w", err)
+}
+
+func validateBaseURL(value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Hostname() == "" || parsed.Opaque != "" {
+		return errors.New("enter an absolute HTTP or HTTPS URL with a host, or leave blank")
+	}
+	return nil
+}
+
 func isProviderConfigured(p string, cfg *config.Config) (bool, string) {
-	if p == "omlx" {
-		return true, "local loopback / keyless"
-	}
-
-	pCfg := cfg.Providers[p]
-	keyVar := pCfg.KeyEnv
-	if keyVar == "" {
-		keyVar = defaultKeyEnvFor(p)
-	}
-
-	if val := os.Getenv(keyVar); val != "" {
-		return true, fmt.Sprintf("$%s detected", keyVar)
-	}
-	if pCfg.APIKey != "" {
-		return true, "API key in config"
-	}
-	if p == "gemini" {
-		if os.Getenv("GEMINI_API_KEY") != "" {
-			return true, "$GEMINI_API_KEY detected"
-		}
-		if os.Getenv("PROMPTER_GEMINI_API_KEY") != "" {
-			return true, "$PROMPTER_GEMINI_API_KEY detected"
-		}
-		if os.Getenv("GOOGLE_APPLICATION_CREDENTIALS") != "" {
-			return false, "$GOOGLE_APPLICATION_CREDENTIALS set; ADC validity not checked"
-		}
-		return false, "ADC availability not checked"
-	}
-	return false, "key not found"
+	status := cfg.CredentialStatus(p)
+	return status.Available, status.Source
 }
 
 type modelChoice struct {
@@ -101,7 +104,6 @@ func popularModelsFor(p string) []modelChoice {
 	case "deepseek":
 		return []modelChoice{
 			{"deepseek-v4.1-flash", "deepseek-v4.1-flash (Default)"},
-			{"deepseek-v4.1-flash", "deepseek-v4.1-flash"},
 			{"deepseek-v4.1-flash-vision-exp", "deepseek-v4.1-flash-vision-exp (Experimental Vision)"},
 		}
 	case "openrouter":
@@ -157,7 +159,6 @@ func RunConfigForm(cfg *config.Config) error {
 		{"omlx", "OMLX (Local MLX Server)"},
 	}
 
-	var firstDetected string
 	providerOptions := make([]huh.Option[string], len(providersList))
 
 	for i, prov := range providersList {
@@ -165,25 +166,11 @@ func RunConfigForm(cfg *config.Config) error {
 		var label string
 		if configured {
 			label = fmt.Sprintf("%-48s [✓ %s]", prov.name, detail)
-			if firstDetected == "" && prov.id != "gemini" {
-				firstDetected = prov.id
-			}
+
 		} else {
-			if detail != "key not found" {
-				label = fmt.Sprintf("%-48s [? %s]", prov.name, detail)
-			} else {
-				keyVar := cfg.Providers[prov.id].KeyEnv
-				if keyVar == "" {
-					keyVar = defaultKeyEnvFor(prov.id)
-				}
-				label = fmt.Sprintf("%-48s [✗ $%s not set]", prov.name, keyVar)
-			}
+			label = fmt.Sprintf("%-48s [? %s]", prov.name, detail)
 		}
 		providerOptions[i] = huh.NewOption(label, prov.id)
-	}
-
-	if selectedProvider == "" && firstDetected != "" {
-		selectedProvider = firstDetected
 	}
 
 	effortOptions := []huh.Option[string]{
@@ -192,8 +179,7 @@ func RunConfigForm(cfg *config.Config) error {
 		huh.NewOption("High (Deep — multi-step reasoning for complex tasks)", "high"),
 	}
 
-	keyMap := huh.NewDefaultKeyMap()
-	keyMap.Quit = key.NewBinding(key.WithKeys("ctrl+c", "q"))
+	keyMap := configKeyMap()
 
 	// =========================================================================
 	// STEP 1: Provider Selection
@@ -209,11 +195,8 @@ func RunConfigForm(cfg *config.Config) error {
 		Description("Choose which LLM provider prompter should route requests to by default.")
 
 	step1 := huh.NewForm(group1).WithKeyMap(keyMap).WithShowHelp(true)
-	if err := step1.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return nil
-		}
-		return fmt.Errorf("config form: %w", err)
+	if err := runConfigStep(step1); err != nil {
+		return configFormError(err)
 	}
 
 	// Adjust defaults for newly selected provider
@@ -222,6 +205,9 @@ func RunConfigForm(cfg *config.Config) error {
 	var keyEnv string
 	if pCfg.KeyEnv != "" {
 		keyEnv = pCfg.KeyEnv
+		if config.ValidateKeyEnv(keyEnv) != nil {
+			keyEnv = ""
+		}
 	} else {
 		keyEnv = defaultKeyEnvFor(selectedProvider)
 	}
@@ -279,45 +265,21 @@ func RunConfigForm(cfg *config.Config) error {
 		Description("Hit TAB / SHIFT+TAB to switch between fields  •  ENTER to advance to Step 3")
 
 	step2 := huh.NewForm(group2).WithKeyMap(keyMap).WithShowHelp(true)
-	if err := step2.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return nil
-		}
-		return fmt.Errorf("config form: %w", err)
+	if err := runConfigStep(step2); err != nil {
+		return configFormError(err)
 	}
 
 	// =========================================================================
 	// STEP 3: Authentication & System Settings
 	// =========================================================================
-	currentKeyEnv := keyEnv
-	if currentKeyEnv == "" {
-		currentKeyEnv = defaultKeyEnvFor(selectedProvider)
-	}
-
-	keyStatusNote := ""
-	if selectedProvider == "omlx" {
-		keyStatusNote = "(optional — local server / keyless)"
-	} else if selectedProvider == "gemini" {
-		if os.Getenv(currentKeyEnv) != "" {
-			keyStatusNote = fmt.Sprintf("(✓ $%s detected in shell)", currentKeyEnv)
-		} else if os.Getenv("PROMPTER_GEMINI_API_KEY") != "" {
-			keyStatusNote = "(✓ $PROMPTER_GEMINI_API_KEY detected in shell)"
-		} else {
-			keyStatusNote = "(ADC availability not checked; API key optional)"
-		}
-	} else if os.Getenv(currentKeyEnv) != "" {
-		keyStatusNote = fmt.Sprintf("(✓ $%s is set in your environment)", currentKeyEnv)
-	} else {
-		keyStatusNote = fmt.Sprintf("(✗ $%s is NOT set in environment)", currentKeyEnv)
-	}
-
-	keyEnvDescription := fmt.Sprintf("Shell variable holding your API key %s", keyStatusNote)
+	keyEnvDescription := "Shell variable holding your API key (" + cfg.CredentialStatus(selectedProvider).Source + ")"
 
 	keyEnvInput := huh.NewInput().
 		Title("API Key Variable Name").
 		Description(keyEnvDescription).
 		Placeholder(defaultKeyEnvFor(selectedProvider)).
-		Value(&keyEnv)
+		Value(&keyEnv).
+		Validate(config.ValidateKeyEnv)
 
 	baseURLPlaceholder := providerDefault.BaseURL
 	if baseURLPlaceholder == "" {
@@ -327,7 +289,8 @@ func RunConfigForm(cfg *config.Config) error {
 		Title("Custom Base URL Override (Optional)").
 		Description("Custom API endpoint or local proxy (leave blank to use provider default):").
 		Placeholder(baseURLPlaceholder).
-		Value(&baseURL)
+		Value(&baseURL).
+		Validate(validateBaseURL)
 
 	copyOptions := []huh.Option[bool]{
 		huh.NewOption("Disabled (do not copy to clipboard automatically)", false),
@@ -340,16 +303,20 @@ func RunConfigForm(cfg *config.Config) error {
 		Options(copyOptions...).
 		Value(&defaultCopy)
 
-	group3 := huh.NewGroup(keyEnvInput, baseURLInput, copySelect).
+	projectID, location := pCfg.ProjectID, pCfg.Location
+	fields := []huh.Field{keyEnvInput, baseURLInput, copySelect}
+	if selectedProvider == "gemini" {
+		fields = append(fields,
+			huh.NewInput().Title("Google Cloud Project ID").Description("Used by Vertex AI; optional when using an AI Studio URL.").Value(&projectID),
+			huh.NewInput().Title("Google Cloud Location").Placeholder("global").Value(&location))
+	}
+	group3 := huh.NewGroup(fields...).
 		Title("Step 3 of 3: Authentication & System Integration").
 		Description("Hit TAB / SHIFT+TAB to switch between fields  •  ENTER to confirm and save settings")
 
 	step3 := huh.NewForm(group3).WithKeyMap(keyMap).WithShowHelp(true)
-	if err := step3.Run(); err != nil {
-		if errors.Is(err, huh.ErrUserAborted) {
-			return nil
-		}
-		return fmt.Errorf("config form: %w", err)
+	if err := runConfigStep(step3); err != nil {
+		return configFormError(err)
 	}
 
 	// Resolve final model identifier
@@ -362,15 +329,19 @@ func RunConfigForm(cfg *config.Config) error {
 		}
 	}
 
-	// Apply updates to config struct
-	cfg.Provider = selectedProvider
+	// Every confirmed wizard field is an explicit assignment, even if equal to a default.
+	keyEnv = strings.TrimSpace(keyEnv)
+	finalModel = strings.TrimSpace(finalModel)
+	baseURL = strings.TrimSpace(baseURL)
+	projectID, location = strings.TrimSpace(projectID), strings.TrimSpace(location)
+	providerPatch := config.ProviderPatch{KeyEnv: &keyEnv, Model: &finalModel, BaseURL: &baseURL}
+	if selectedProvider == "gemini" {
+		providerPatch.ProjectID = &projectID
+		providerPatch.Location = &location
+	}
+	cfg.ApplyPatch(config.ConfigPatch{Provider: &selectedProvider, Effort: &effort, DefaultCopy: &defaultCopy,
+		Providers: map[string]config.ProviderPatch{selectedProvider: providerPatch}})
 	updatedProvider := cfg.Providers[selectedProvider]
-	updatedProvider.KeyEnv = strings.TrimSpace(keyEnv)
-	updatedProvider.Model = strings.TrimSpace(finalModel)
-	updatedProvider.BaseURL = strings.TrimSpace(baseURL)
-	cfg.Providers[selectedProvider] = updatedProvider
-	cfg.Effort = effort
-	cfg.DefaultCopy = defaultCopy
 
 	// Save to config file with portable ~ paths
 	if err := config.Save(cfg); err != nil {
@@ -388,27 +359,10 @@ func RunConfigForm(cfg *config.Config) error {
 	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 	fmt.Printf("  Active Provider:     %s\n", cfg.Provider)
 	fmt.Printf("  Default Model:       %s\n", finalModel)
-	if updatedProvider.KeyEnv != "" {
-		keyStatus := ""
-		if cfg.Provider == "omlx" {
-			keyStatus = "local server / keyless ✓"
-		} else if cfg.Provider == "gemini" {
-			if os.Getenv(updatedProvider.KeyEnv) != "" {
-				keyStatus = "detected in environment ✓"
-			} else if os.Getenv("PROMPTER_GEMINI_API_KEY") != "" {
-				keyStatus = "$PROMPTER_GEMINI_API_KEY detected ✓"
-			} else {
-				keyStatus = "ADC availability not checked (optional key not set)"
-			}
-		} else if os.Getenv(updatedProvider.KeyEnv) != "" {
-			keyStatus = "detected in environment ✓"
-		} else {
-			keyStatus = fmt.Sprintf("NOT set in environment ✗ (export %s=...)", updatedProvider.KeyEnv)
-		}
-		fmt.Printf("  API Key Variable:    $%s [%s]\n", updatedProvider.KeyEnv, keyStatus)
-	}
+	fmt.Printf("  Credential source:   %s\n", cfg.CredentialStatus(cfg.Provider).Source)
+
 	if updatedProvider.BaseURL != "" {
-		fmt.Printf("  Custom Base URL:     %s\n", updatedProvider.BaseURL)
+		fmt.Printf("  Custom Base URL:     %s\n", redactURLUserinfo(updatedProvider.BaseURL))
 	}
 	fmt.Printf("  Reasoning Effort:    %s\n", cfg.Effort)
 	fmt.Printf("  Clipboard Sync:      %t\n", cfg.DefaultCopy)

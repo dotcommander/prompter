@@ -17,7 +17,7 @@ Prompter has three operations: enrichment (the default, also available as the `r
 
 ## Enrichment flags
 
-`refine` is the only command word; `prompter "rough prompt"` is equivalent to `prompter refine "rough prompt"`.
+`refine` is the only command word; `prompter "rough prompt"` is equivalent to `prompter refine "rough prompt"`. Operation collisions are rejected regardless of flag placement. Flag values and text after `--` are literal input; for example, `prompter refine --file refine` treats the second `refine` as a filename. `--config` rejects positional input even after `--`.
 
 ### Provider flags
 
@@ -36,6 +36,8 @@ The provider determines which credentials and environment variables are read; se
 | `-s STYLE` | Short form of `--style`. |
 | `--style STYLE` | Use a named style: `default`, `code`, `concise`, `creative`, or `spec`. User overrides live in `~/.config/prompter/styles/<name>.md`. |
 
+The `spec` style returns an implementation-ready specification. Its `specification_only` output contract specializes enrichment while retaining the `PROMPTER_INPUT_V1` envelope’s `transform_only` treatment of untrusted input. It never implements the specification.
+
 ### Input and output handling
 
 | Flag | Meaning |
@@ -46,6 +48,8 @@ The provider determines which credentials and environment variables are read; se
 | `--stream` | Stream tokens to stdout as they arrive. Incompatible with `--output` and `--copy`. |
 | `--dry-run` | Print resolved settings to stderr and exit 0 without calling the provider. |
 | `-v, --verbose` | Print timing diagnostics to stderr. |
+
+For buffered enrichment and image assembly, explicit `--copy` failure exits 1. A failure of automatic copying (`default_copy: true`) warns on stderr and preserves successful prompt output and exit status.
 
 ### Examples
 
@@ -87,7 +91,7 @@ prompter --image "portrait of a clockmaker" --count 2 --json
 prompter --image "moon castle" --categories quality,composition --seed 7
 ```
 
-`--config` takes no flags. Positional input with `--config` is a usage error. On an interactive terminal it opens the configuration form; with redirected output it prints the resolved non-secret configuration, including the active provider and model. See [Configuration](../README.md#configuration-and-local-state) for the config file location.
+`--config` takes no flags. Positional input with `--config` is a usage error. On an interactive terminal it opens the configuration form; with redirected output it prints the resolved non-secret configuration, including the active provider and model, plus credential sources without values. ADC is reported as unchecked. Use Ctrl+C to cancel without saving; ordinary `q` remains text input. See [Configuration](../README.md#configuration-and-local-state) for the config file location.
 
 ## Retired operations
 
@@ -100,7 +104,7 @@ The `critique`, `rewrite`, `apply`, `browse`, `models refresh`, and `prompts sta
 | `0` | Success (including `--dry-run` and help/version output). |
 | `1` | Runtime or input failure. |
 | `2` | Usage failure: unknown flag, operation collision, or retired command. |
-| `130` | Canceled with SIGINT. |
+| `130` | Canceled with SIGINT or Ctrl+C in the configuration form; cancellation saves nothing. |
 
 ## Configuration precedence
 
