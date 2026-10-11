@@ -101,7 +101,7 @@ when invoked.
   `GEMINI_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, or `GCP_PROJECT`.
 - `gemini.location` defaults to `global`.
 - `gemini.model` defaults to `gemini-3.7-flash`.
-- Streaming and reasoning effort (`thinkingConfig`) are supported.
+- Streaming and reasoning effort (`thinkingConfig.thinkingLevel`: `minimal`, `low`, `medium`, `high`) are supported; the level is validated against the model's documented set (unknown models pass through).
 - The offline configuration form includes project and location fields. AI Studio does not require a Vertex project; select it with a base URL whose host is `generativelanguage.googleapis.com`.
 
 Generation requests are never automatically retried, including transient HTTP errors and ambiguous network outcomes. `max_retries` / `PROMPTER_MAX_RETRIES` remains an inactive compatibility setting (default `3`, nonnegative integers including `0`); changing it does not enable generation replay.

@@ -283,6 +283,23 @@ func TestLoadMaxOutputTokensExplicit(t *testing.T) {
 	}
 }
 
+func TestLoadEffortAcceptsMinimalAndRejectsUnknown(t *testing.T) {
+	writeTestConfig(t, `{"provider":"gemini","gemini":{"model":"gemini-3.6-flash"}}`)
+	t.Setenv("PROMPTER_EFFORT", "minimal")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Effort != "minimal" {
+		t.Fatalf("Effort = %q, want minimal", cfg.Effort)
+	}
+
+	t.Setenv("PROMPTER_EFFORT", "ultra")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "minimal, low, medium, or high") {
+		t.Fatalf("invalid effort error = %v", err)
+	}
+}
+
 func TestLoadDoesNotCarryConfigAcrossHomes(t *testing.T) {
 	clearAllProviderEnvVars(t)
 	firstHome := writeTestConfig(t, `{"provider":"openai","prompt_file":"~/first.md","max_output_tokens":123,"openai":{"model":"file-model"}}`)

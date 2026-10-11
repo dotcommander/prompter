@@ -192,10 +192,13 @@ func (p *openAIProvider) StreamCall(ctx context.Context, req CallRequest, w io.W
 }
 
 // mapEffort converts a validated effort string to the SDK constant.
-// config.Load guarantees the value is one of {low,medium,high}; the
-// default arm is unreachable in normal operation.
+// config.Load guarantees the value is one of {minimal,low,medium,high}; the
+// SDK (v1.12.0) lacks a minimal constant, so it is passed through as the
+// wire string the Responses API accepts for gpt-5-family models.
 func mapEffort(effort string) shared.ReasoningEffort {
 	switch effort {
+	case "minimal":
+		return shared.ReasoningEffort(effort)
 	case "medium":
 		return shared.ReasoningEffortMedium
 	case "high":

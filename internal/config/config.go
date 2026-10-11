@@ -321,7 +321,7 @@ func Load() (*Config, error) {
 	cfg.ComponentsFile = expandPath(stringValue("components_file", "PROMPTER_COMPONENTS_FILE", file.ComponentsFile, "~/.config/prompter/components.json"))
 	cfg.Effort = stringValue("effort", "PROMPTER_EFFORT", file.Effort, "low")
 	if !slices.Contains(validEfforts, cfg.Effort) {
-		return nil, fmt.Errorf("invalid effort %q: must be low, medium, or high", cfg.Effort)
+		return nil, fmt.Errorf("invalid effort %q: must be minimal, low, medium, or high", cfg.Effort)
 	}
 	if env, exists := os.LookupEnv("PROMPTER_PROMPTS_DIRS"); exists {
 		cfg.PromptsDirs = expandPaths(strings.Split(env, ","))
@@ -450,4 +450,6 @@ func writeConfigAtomically(path string, data []byte, replace func(string, string
 }
 
 // validEfforts is the single source of truth for accepted effort values.
-var validEfforts = []string{"low", "medium", "high"}
+// "minimal" maps to Gemini's minimal thinkingLevel and is passed through to
+// OpenAI as the gpt-5 minimal reasoning effort.
+var validEfforts = []string{"minimal", "low", "medium", "high"}

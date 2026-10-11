@@ -203,8 +203,16 @@ func (p *geminiProvider) buildRequestBody(req CallRequest) ([]byte, error) {
 	}
 
 	if req.Effort != "" {
+		level := strings.ToLower(strings.TrimSpace(req.Effort))
+		model := req.Model
+		if model == "" {
+			model = p.model
+		}
+		if err := validateGeminiThinkingLevel(model, level); err != nil {
+			return nil, err
+		}
 		payload.GenerationConfig.ThinkingConfig = &geminiThinkingConfig{
-			ThinkingLevel: strings.ToUpper(strings.TrimSpace(req.Effort)),
+			ThinkingLevel: level,
 		}
 	}
 
