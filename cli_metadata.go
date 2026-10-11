@@ -160,7 +160,7 @@ func getVersionString() string {
 		commit = commit[:7]
 	}
 	if commit != "" && vcsTime != "" {
-		return fmt.Sprintf("prompter %s (commit %s, built %s)", version, commit, vcsTime)
+		return fmt.Sprintf("prompter %s (commit %s, committed %s)", version, commit, vcsTime)
 	}
 	if commit != "" {
 		return fmt.Sprintf("prompter %s (commit %s)", version, commit)
