@@ -2,6 +2,7 @@ package main
 
 import (
 	"charm.land/huh/v2"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -97,6 +98,45 @@ func TestConfigWizardQuitAndValidation(t *testing.T) {
 		err := config.ValidateKeyEnv(value)
 		if err == nil || strings.Contains(err.Error(), value) {
 			t.Fatal("unsafe selector validation")
+		}
+	}
+}
+
+func TestConfigWizardSavePersistsPortableConfigWithoutSecrets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	old := runConfigStep
+	defer func() { runConfigStep = old }()
+	runConfigStep = func(*huh.Form) error { return nil }
+
+	cfg := &config.Config{Provider: "groq", Providers: config.DefaultProviders()}
+	cfg.PromptsDir = filepath.Join(home, ".config", "prompter", "prompts.d")
+	if err := RunConfigForm(cfg); err != nil {
+		t.Fatalf("RunConfigForm: %v", err)
+	}
+
+	path := filepath.Join(home, ".config", "prompter", "config.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	var saved map[string]any
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatalf("saved config is not valid JSON: %v\n%s", err, data)
+	}
+	if saved["provider"] != "groq" {
+		t.Errorf("provider = %v, want groq", saved["provider"])
+	}
+	if got, _ := saved["prompts_dir"].(string); got != "~/.config/prompter/prompts.d" {
+		t.Errorf("prompts_dir = %q, want portable ~/.config/prompter/prompts.d", got)
+	}
+	for key, value := range saved {
+		fields, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if _, has := fields["api_key"]; has {
+			t.Errorf("provider %q persisted an api_key", key)
 		}
 	}
 }
