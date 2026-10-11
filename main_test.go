@@ -560,6 +560,44 @@ func TestWriteOutput(t *testing.T) {
 	}
 }
 
+func TestRefineFanoutWritesIdenticalBytesToFileAndStdout(t *testing.T) {
+	t.Parallel()
+	results := map[string]string{
+		"provider result without newline": "enhanced prompt",
+		"already terminated":              "enhanced prompt\n",
+		"multi-line blank-padded":         "line one\n\nline two\n\n",
+	}
+	for name, raw := range results {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			result := ensureTrailingNewline(raw)
+
+			var stdout bytes.Buffer
+			printResult(&stdout, result)
+
+			path := filepath.Join(t.TempDir(), "out.txt")
+			if err := writeOutput(path, result); err != nil {
+				t.Fatalf("writeOutput error: %v", err)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read output: %v", err)
+			}
+
+			if !bytes.Equal(data, stdout.Bytes()) {
+				t.Errorf("file bytes (%q) != stdout bytes (%q)", data, stdout.Bytes())
+			}
+			if !bytes.HasSuffix(data, []byte("\n")) {
+				t.Errorf("result must be newline-terminated, got %q", data)
+			}
+		})
+	}
+
+	if got := ensureTrailingNewline(""); got != "" {
+		t.Errorf("ensureTrailingNewline(\"\") = %q, want empty", got)
+	}
+}
+
 func TestPrintDryRun(t *testing.T) {
 	t.Parallel()
 	var out strings.Builder

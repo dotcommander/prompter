@@ -312,6 +312,16 @@ func writeOutput(path, content string) error {
 	return nil
 }
 
+// ensureTrailingNewline makes a buffered refine result newline-terminated so
+// every consumer of the result fan-out (output file, clipboard, stdout via
+// printResult) receives byte-identical content. Empty results stay empty.
+func ensureTrailingNewline(result string) string {
+	if result == "" || strings.HasSuffix(result, "\n") {
+		return result
+	}
+	return result + "\n"
+}
+
 func newLoggerTo(stderr io.Writer, verbose bool) *slog.Logger {
 	level := slog.LevelWarn
 	if verbose {
@@ -464,6 +474,8 @@ func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *sl
 	if err != nil {
 		return timeoutErr(err)
 	}
+
+	result = ensureTrailingNewline(result)
 
 	if f.output != "" {
 		if err := writeOutput(f.output, result); err != nil {
