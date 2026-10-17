@@ -12,33 +12,38 @@ import (
 // ConfigPatch records explicit assignments, including default-equal values and clears.
 // Nil pointers leave persisted intent untouched.
 type ConfigPatch struct {
-	Provider        *string
-	PromptFile      *string
-	PromptsDir      *string
-	PromptsDirs     *[]string
-	ComponentsFile  *string
-	Effort          *string
-	Timeout         *int
-	MaxOutputTokens *int
-	MaxRetries      *int
-	DefaultCopy     *bool
-	Providers       map[string]ProviderPatch
+	Provider                *string
+	PromptFile              *string
+	PromptsDir              *string
+	PromptsDirs             *[]string
+	ComponentsFile          *string
+	Effort                  *string
+	Timeout                 *int
+	MaxOutputTokens         *int
+	MaxRetries              *int
+	DefaultCopy             *bool
+	RoutingMode             *string
+	RoutingLocalProvider    *string
+	RoutingFrontierProvider *string
+	RoutingLocalMaxTokens   *int
+	Providers               map[string]ProviderPatch
 }
 
 // ProviderPatch records explicit per-provider assignments; nil pointers leave
 // persisted intent untouched.
 type ProviderPatch struct {
-	KeyEnv    *string
-	Model     *string
-	BaseURL   *string
-	ProjectID *string
-	Location  *string
+	KeyEnv        *string
+	Model         *string
+	BaseURL       *string
+	ProjectID     *string
+	Location      *string
+	ContextWindow *int
 }
 
 var configFields = map[string]string{
-	"Provider": "provider", "PromptFile": "prompt_file", "PromptsDir": "prompts_dir", "PromptsDirs": "prompts_dirs", "ComponentsFile": "components_file", "Effort": "effort", "Timeout": "timeout", "MaxOutputTokens": "max_output_tokens", "MaxRetries": "max_retries", "DefaultCopy": "default_copy",
+	"Provider": "provider", "PromptFile": "prompt_file", "PromptsDir": "prompts_dir", "PromptsDirs": "prompts_dirs", "ComponentsFile": "components_file", "Effort": "effort", "Timeout": "timeout", "MaxOutputTokens": "max_output_tokens", "MaxRetries": "max_retries", "DefaultCopy": "default_copy", "RoutingMode": "routing_mode", "RoutingLocalProvider": "routing_local_provider", "RoutingFrontierProvider": "routing_frontier_provider", "RoutingLocalMaxTokens": "routing_local_max_tokens",
 }
-var providerFields = map[string]string{"KeyEnv": "key_env", "Model": "model", "BaseURL": "base_url", "ProjectID": "project_id", "Location": "location"}
+var providerFields = map[string]string{"KeyEnv": "key_env", "Model": "model", "BaseURL": "base_url", "ProjectID": "project_id", "Location": "location", "ContextWindow": "context_window"}
 
 // ApplyPatch updates runtime values and marks deliberate persistence intent.
 func (cfg *Config) ApplyPatch(patch ConfigPatch) {

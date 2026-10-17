@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/dotcommander/prompter/internal/provider"
 )
 
 // Config holds the resolved configuration used at runtime.
@@ -27,6 +29,17 @@ type Config struct {
 	MaxRetries              int // Compatibility setting; generation replay remains disabled.
 	DefaultCopy             bool
 
+	// RoutingMode selects input-sized provider routing for enrichment
+	// ("off" | "auto"). Explicit provider selection always wins over routing.
+	RoutingMode string
+	// RoutingLocalProvider is the local tier target used when routing is auto.
+	RoutingLocalProvider string
+	// RoutingFrontierProvider is the escalation target above the local budget.
+	RoutingFrontierProvider string
+	// RoutingLocalMaxTokens is the positive estimated-token budget for the
+	// local tier; inputs above it escalate to the frontier provider.
+	RoutingLocalMaxTokens int
+
 	// Cached system prompt loaded once at startup.
 	SystemPrompt string `json:"-"`
 
@@ -39,12 +52,13 @@ type Config struct {
 
 // ProviderConfig holds the per-provider fields from the config file.
 type ProviderConfig struct {
-	APIKey    string `json:"api_key,omitempty" mapstructure:"api_key"`
-	KeyEnv    string `json:"key_env,omitempty" mapstructure:"key_env"`
-	Model     string `json:"model,omitempty" mapstructure:"model"`
-	BaseURL   string `json:"base_url,omitempty" mapstructure:"base_url"`
-	ProjectID string `json:"project_id,omitempty" mapstructure:"project_id"`
-	Location  string `json:"location,omitempty" mapstructure:"location"`
+	APIKey        string `json:"api_key,omitempty" mapstructure:"api_key"`
+	KeyEnv        string `json:"key_env,omitempty" mapstructure:"key_env"`
+	Model         string `json:"model,omitempty" mapstructure:"model"`
+	BaseURL       string `json:"base_url,omitempty" mapstructure:"base_url"`
+	ProjectID     string `json:"project_id,omitempty" mapstructure:"project_id"`
+	Location      string `json:"location,omitempty" mapstructure:"location"`
+	ContextWindow int    `json:"context_window,omitempty" mapstructure:"context_window"`
 }
 
 // ConfigFile mirrors the JSON structure of the config file.
@@ -59,6 +73,11 @@ type ConfigFile struct {
 	MaxOutputTokens int      `json:"max_output_tokens,omitempty" mapstructure:"max_output_tokens"`
 	MaxRetries      int      `json:"max_retries,omitempty" mapstructure:"max_retries"`
 	DefaultCopy     bool     `json:"default_copy,omitempty" mapstructure:"default_copy"`
+
+	RoutingMode             string `json:"routing_mode,omitempty" mapstructure:"routing_mode"`
+	RoutingLocalProvider    string `json:"routing_local_provider,omitempty" mapstructure:"routing_local_provider"`
+	RoutingFrontierProvider string `json:"routing_frontier_provider,omitempty" mapstructure:"routing_frontier_provider"`
+	RoutingLocalMaxTokens   int    `json:"routing_local_max_tokens,omitempty" mapstructure:"routing_local_max_tokens"`
 
 	OpenAI     ProviderConfig `json:"openai" mapstructure:"openai"`
 	Cerebras   ProviderConfig `json:"cerebras" mapstructure:"cerebras"`
@@ -75,7 +94,14 @@ const (
 	StreamingTimeout       = 180  // seconds
 	DefaultMaxOutputTokens = 4096 // tokens
 	DefaultMaxRetries      = 3    // retries
+	// DefaultRoutingLocalMaxTokens is the estimated-token budget below which
+	// auto routing stays on the local tier.
+	DefaultRoutingLocalMaxTokens = 2048 // tokens
 )
+
+// validRoutingModes is the accepted routing_mode set. "auto" routes by
+// estimated input size; "off" keeps provider selection static.
+var validRoutingModes = []string{"off", "auto"}
 
 func getConfigPath() string {
 	home, err := os.UserHomeDir()
@@ -216,7 +242,7 @@ func DefaultProviders() map[string]ProviderConfig {
 	}
 }
 
-func resolveProvider(name string, fileCfg ProviderConfig, defaultCfg ProviderConfig, origins map[string]string) ProviderConfig {
+func resolveProvider(name string, fileCfg ProviderConfig, defaultCfg ProviderConfig, origins map[string]string) (ProviderConfig, error) {
 	upper := strings.ToUpper(name)
 	res := fileCfg
 	resolve := func(field, file, fallback string, envs ...string) string {
@@ -260,7 +286,33 @@ func resolveProvider(name string, fileCfg ProviderConfig, defaultCfg ProviderCon
 		res.ProjectID = resolve("project_id", fileCfg.ProjectID, defaultCfg.ProjectID, "PROMPTER_GEMINI_PROJECT_ID", "GEMINI_PROJECT_ID", "GOOGLE_CLOUD_PROJECT", "GCP_PROJECT")
 		res.Location = resolve("location", fileCfg.Location, defaultCfg.Location, "PROMPTER_GEMINI_LOCATION", "GEMINI_LOCATION")
 	}
-	return res
+	if fileCfg.ContextWindow < 0 {
+		return ProviderConfig{}, fmt.Errorf("config: %s context_window must be >= 0", name)
+	}
+	res.ContextWindow = fileCfg.ContextWindow
+	if origins != nil {
+		origins[name+".context_window"] = "built-in default"
+		if fileCfg.ContextWindow > 0 {
+			origins[name+".context_window"] = "config file"
+		}
+	}
+	for _, env := range []string{"PROMPTER_" + upper + "_CONTEXT_WINDOW", upper + "_CONTEXT_WINDOW"} {
+		if text := os.Getenv(env); text != "" {
+			parsed, err := strconv.Atoi(text)
+			if err != nil {
+				return ProviderConfig{}, fmt.Errorf("config: %s must be an integer", env)
+			}
+			if parsed < 0 {
+				return ProviderConfig{}, fmt.Errorf("config: %s must be >= 0", env)
+			}
+			res.ContextWindow = parsed
+			if origins != nil {
+				origins[name+".context_window"] = "environment: " + env
+			}
+			break
+		}
+	}
+	return res, nil
 }
 
 // Load resolves environment over persisted settings over built-in defaults.
@@ -380,10 +432,33 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("config: PROMPTER_DEFAULT_COPY must be a boolean")
 		}
 	}
+	cfg.RoutingMode = stringValue("routing_mode", "PROMPTER_ROUTING_MODE", file.RoutingMode, "off")
+	if !slices.Contains(validRoutingModes, cfg.RoutingMode) {
+		return nil, fmt.Errorf("invalid routing_mode %q: must be off or auto", cfg.RoutingMode)
+	}
+	cfg.RoutingLocalProvider = stringValue("routing_local_provider", "PROMPTER_ROUTING_LOCAL_PROVIDER", file.RoutingLocalProvider, "omlx")
+	cfg.RoutingFrontierProvider = stringValue("routing_frontier_provider", "PROMPTER_ROUTING_FRONTIER_PROVIDER", file.RoutingFrontierProvider, "gemini")
+	if cfg.RoutingLocalMaxTokens, err = number("routing_local_max_tokens", "PROMPTER_ROUTING_LOCAL_MAX_TOKENS", file.RoutingLocalMaxTokens, DefaultRoutingLocalMaxTokens, 1); err != nil {
+		return nil, err
+	}
+	if cfg.RoutingMode == "auto" {
+		for _, tier := range []struct{ field, value string }{
+			{"routing_local_provider", cfg.RoutingLocalProvider},
+			{"routing_frontier_provider", cfg.RoutingFrontierProvider},
+		} {
+			if !slices.Contains(provider.KnownNames(), tier.value) {
+				return nil, fmt.Errorf("config: %s %q is not a known provider (valid: %s)", tier.field, tier.value, provider.KnownNamesString())
+			}
+		}
+	}
 	files := map[string]ProviderConfig{"openai": file.OpenAI, "cerebras": file.Cerebras, "deepseek": file.DeepSeek, "groq": file.Groq, "openrouter": file.OpenRouter, "zai": file.Zai, "gemini": file.Gemini, "omlx": file.Omlx}
 	cfg.Providers = map[string]ProviderConfig{}
 	for name, defaults := range DefaultProviders() {
-		cfg.Providers[name] = resolveProvider(name, files[name], defaults, cfg.origins)
+		resolved, err := resolveProvider(name, files[name], defaults, cfg.origins)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Providers[name] = resolved
 	}
 	cfg.baseline = cfg.snapshot()
 	return cfg, nil

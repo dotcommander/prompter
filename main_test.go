@@ -615,7 +615,7 @@ func TestPrintDryRun(t *testing.T) {
 		SystemPrompt:    "system prompt",
 	}
 
-	printDryRun(&out, prov, "model-b", f, cfg, "prompt", 60*time.Second)
+	printDryRun(&out, prov, "model-b", f, cfg, "prompt", 60*time.Second, "")
 
 	got := out.String()
 	for _, want := range []string{
@@ -647,7 +647,7 @@ func TestPrintDryRunDefaultStyle(t *testing.T) {
 	f := &flags{command: commandRefine, dryRun: true}
 	cfg := &config.Config{MaxOutputTokens: 4096}
 
-	printDryRun(&out, prov, "model-a", f, cfg, "prompt", time.Minute)
+	printDryRun(&out, prov, "model-a", f, cfg, "prompt", time.Minute, "")
 
 	if !strings.Contains(out.String(), "Style: default") {
 		t.Fatalf("dry run output missing default style:\n%s", out.String())
@@ -657,7 +657,7 @@ func TestPrintDryRunDefaultStyle(t *testing.T) {
 func TestDryRunCredentialSourceDoesNotExposeCredential(t *testing.T) {
 	cfg := &config.Config{Providers: map[string]config.ProviderConfig{"groq": {APIKey: "private-value"}}}
 	var out strings.Builder
-	printDryRun(&out, provider.NewChat("groq", "private-value", "model", "http://test", 0), "model", &flags{command: commandRefine}, cfg, "input", time.Minute)
+	printDryRun(&out, provider.NewChat("groq", "private-value", "model", "http://test", 0), "model", &flags{command: commandRefine}, cfg, "input", time.Minute, "")
 	if strings.Contains(out.String(), "private-value") || !strings.Contains(out.String(), cfg.CredentialStatus("groq").Source) {
 		t.Fatalf("incorrect credential reporting: %s", out.String())
 	}
@@ -1356,5 +1356,97 @@ func TestReadLimitedExceedsLimit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "1 MB limit") {
 		t.Errorf("error = %q, want containing '1 MB limit'", err.Error())
+	}
+}
+
+func routingTestConfig() *config.Config {
+	return &config.Config{
+		Provider:                "gemini",
+		RoutingMode:             "auto",
+		RoutingLocalProvider:    "omlx",
+		RoutingFrontierProvider: "gemini",
+		RoutingLocalMaxTokens:   4096,
+		Effort:                  "low",
+		MaxOutputTokens:         4096,
+		Providers: map[string]config.ProviderConfig{
+			"omlx":   {Model: "local-model", BaseURL: "http://127.0.0.1:8000/v1"},
+			"gemini": {Model: "frontier-model"},
+		},
+	}
+}
+
+func TestRunRoutingAutoSendsShortInputToLocal(t *testing.T) {
+	t.Parallel()
+	f := &flags{command: commandRefine, dryRun: true, args: []string{"tighten this prompt"}}
+	var stderr strings.Builder
+	err := runWithOutput(context.Background(), f, routingTestConfig(), newLogger(false), commandOutput{stdout: &strings.Builder{}, stderr: &stderr})
+	if err != nil {
+		t.Fatalf("runWithOutput error = %v", err)
+	}
+	for _, want := range []string{"Provider: omlx", "Routing: auto -> omlx", "Input tokens (est):"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("dry run missing %q:\n%s", want, stderr.String())
+		}
+	}
+}
+
+func TestRunRoutingAutoEscalatesLargeInputToFrontier(t *testing.T) {
+	t.Parallel()
+	cfg := routingTestConfig()
+	cfg.RoutingLocalMaxTokens = 64
+	f := &flags{command: commandRefine, dryRun: true, args: []string{strings.Repeat("explain this repository in detail. ", 128)}}
+	var stderr strings.Builder
+	err := runWithOutput(context.Background(), f, cfg, newLogger(false), commandOutput{stdout: &strings.Builder{}, stderr: &stderr})
+	if err != nil {
+		t.Fatalf("runWithOutput error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Provider: gemini") || !strings.Contains(stderr.String(), "Routing: auto -> gemini") {
+		t.Errorf("dry run missing frontier routing:\n%s", stderr.String())
+	}
+}
+
+func TestRunProviderFlagBeatsRouting(t *testing.T) {
+	t.Parallel()
+	f := &flags{command: commandRefine, dryRun: true, provider: "omlx", args: []string{"hello"}}
+	var stderr strings.Builder
+	err := runWithOutput(context.Background(), f, routingTestConfig(), newLogger(false), commandOutput{stdout: &strings.Builder{}, stderr: &stderr})
+	if err != nil {
+		t.Fatalf("runWithOutput error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Provider: omlx") {
+		t.Errorf("dry run missing flagged provider:\n%s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Routing:") {
+		t.Errorf("dry run must not report routing when the provider flag wins:\n%s", stderr.String())
+	}
+}
+
+func TestRunPreflightRejectsOversizedPromptBeforeDryRun(t *testing.T) {
+	t.Parallel()
+	cfg := routingTestConfig()
+	cfg.Providers["omlx"] = config.ProviderConfig{Model: "local-model", BaseURL: "http://127.0.0.1:8000/v1", ContextWindow: 512}
+	f := &flags{command: commandRefine, dryRun: true, provider: "omlx", args: []string{"hello"}}
+	var stderr strings.Builder
+	err := runWithOutput(context.Background(), f, cfg, newLogger(false), commandOutput{stdout: &strings.Builder{}, stderr: &stderr})
+	if err == nil || !strings.Contains(err.Error(), "context window exceeded") {
+		t.Fatalf("runWithOutput error = %v, want context window failure", err)
+	}
+	if strings.Contains(stderr.String(), "Dry run") {
+		t.Errorf("dry run must not print after a failed preflight:\n%s", stderr.String())
+	}
+}
+
+func TestRunPreflightReportsWindowInDryRun(t *testing.T) {
+	t.Parallel()
+	cfg := routingTestConfig()
+	cfg.Providers["omlx"] = config.ProviderConfig{Model: "local-model", BaseURL: "http://127.0.0.1:8000/v1", ContextWindow: 1000000}
+	f := &flags{command: commandRefine, dryRun: true, args: []string{"hello"}}
+	var stderr strings.Builder
+	err := runWithOutput(context.Background(), f, cfg, newLogger(false), commandOutput{stdout: &strings.Builder{}, stderr: &stderr})
+	if err != nil {
+		t.Fatalf("runWithOutput error = %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Context window: 1000000") {
+		t.Errorf("dry run missing context window:\n%s", stderr.String())
 	}
 }

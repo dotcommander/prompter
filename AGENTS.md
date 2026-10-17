@@ -55,8 +55,15 @@ Settings are resolved using a strict precedence order:
 | `<provider>.key_env` | `PROMPTER_<PROVIDER>_KEY_ENV` | `""` | Custom env var name containing the API key constant |
 | `<provider>.model` | `<PROVIDER>_MODEL` or `PROMPTER_<PROVIDER>_MODEL` | Provider default | Default model identifier override |
 | `<provider>.base_url` | `<PROVIDER>_BASE_URL` or `PROMPTER_<PROVIDER>_BASE_URL` | Provider default | Custom API endpoint override |
+| `<provider>.context_window` | `<PROVIDER>_CONTEXT_WINDOW` or `PROMPTER_<PROVIDER>_CONTEXT_WINDOW` | `0` (gate disabled) | Positive context window in tokens enabling the deterministic preflight gate |
+| `routing_mode` | `PROMPTER_ROUTING_MODE` | `off` | `auto` enables input-sized provider routing for enrichment |
+| `routing_local_provider` | `PROMPTER_ROUTING_LOCAL_PROVIDER` | `omlx` | Local tier target while routing is `auto` |
+| `routing_frontier_provider` | `PROMPTER_ROUTING_FRONTIER_PROVIDER` | `gemini` | Frontier tier for inputs above the local budget |
+| `routing_local_max_tokens` | `PROMPTER_ROUTING_LOCAL_MAX_TOKENS` | `2048` | Positive estimated-token budget for the local tier |
 
 Credentials resolve as `PROMPTER_<PROVIDER>_API_KEY` → the selected custom environment variable → `<PROVIDER>_API_KEY` → file `api_key`. Resolve `PROMPTER_<PROVIDER>_KEY_ENV` before looking up its target. Credential-status output identifies the source without printing values; Vertex ADC is reported as unchecked, because configuration remains offline.
+
+When `routing_mode` is `auto` and the provider was not explicitly selected (`-p`, `PROMPTER_PROVIDER`, or a file `provider` key; ambient API-key detection does not block routing), enrichment estimates the bounded input deterministically (max of whitespace-collapsed word count and bytes÷4, zero LLM involvement) and routes at or under `routing_local_max_tokens` to `routing_local_provider`, otherwise escalating to `routing_frontier_provider`. A positive `<provider>.context_window` fails fast with exit 1 before any provider call when the estimated prompt size (system prompt + bounded input + `max_output_tokens`) exceeds the window; the dry-run report includes the routing decision, `Input tokens (est)`, and `Context window`.
 
 Saving preserves persisted settings and deliberate edits, including explicit default-equal values, `false`, zero retries, and empty lists. Inherited environment values and untouched defaults are not copied into the file; API-key values are omitted. Nonempty numeric environment values must be integers: timeout and output limits are positive, compatibility retries are nonnegative. Explicit file values follow the same numeric bounds. `PROMPTER_PROMPTS_DIRS` is a comma-separated list with trimmed entries; an explicitly empty value disables the list.
 
@@ -78,6 +85,7 @@ prompter/
 ├── cli_metadata.go             # Usage output, version, config printing
 ├── config_tui.go               # Interactive Huh/BubbleTea TUI configuration wizard
 ├── prompt_boundary.go          # Untrusted-input envelope (transform_only operation) for enrichment
+├── triage.go                   # L0 token estimation, auto provider routing, context-window preflight
 ├── prompts.go                  # Enhancement system-prompt loading
 ├── embed.go                    # Embedded FS bindings for default prompt & styles
 ├── components.go               # Offline image prompt assembler and component statistics
@@ -121,9 +129,13 @@ flowchart TD
     CheckMode -- "refine / default" --> LLMFlow[LLM Pipeline]
     LLMFlow --> ResolvePrompt[Resolve system prompt: style/s or embedded enhance prompt]
     ResolvePrompt --> Boundary[boundPromptInput: wrap input in PROMPTER_INPUT_V1 transform_only envelope]
-    Boundary --> ResolveProv[Resolve Provider from Registry & Validate Keys]
-    ResolveProv --> ReadInput[Read Input: args / --file / stdin max 1MB]
-    ReadInput --> DryRunCheck{--dry-run?}
+    Boundary --> ReadInput[Read Input: args / --file / stdin max 1MB]
+    ReadInput --> RouteInput{routing_mode auto and provider unselected?}
+    RouteInput -- yes --> DecideRoute[Estimate tokens: local tier or frontier escalation]
+    RouteInput -- no --> ResolveProv[Resolve Provider from Registry & Validate Keys]
+    DecideRoute --> ResolveProv
+    ResolveProv --> Preflight[Context-window preflight when context_window is set]
+    Preflight --> DryRunCheck{--dry-run?}
     DryRunCheck -- Yes --> PrintDryRun[Print Resolved Config to stderr, exit 0]
     DryRunCheck -- No --> StreamCheck{--stream?}
     StreamCheck -- Yes --> StreamCall[prov.StreamCall: Stream tokens to stdout]
@@ -134,12 +146,13 @@ flowchart TD
 ### Data Transformations
 1. **Input Normalization**: Ingests CLI args, stdin, or file paths up to a hard ceiling of 1 MB (`readLimited`).
 2. **Operation Selection**: `selectOperation` resolves exactly one operation. Retired first words become migration errors; `--` starts literal input; operation collisions exit 2.
-3. **Context Assembly**: Combines the enrichment system prompt (embedded template, style override, or custom `prompt_file`) with the user input wrapped by `boundPromptInput` into a unified `provider.CallRequest{Model, SystemPrompt, UserPrompt, Effort}`. `--image` and `--config` never reach the provider path.
-4. **Payload Formatting**:
+3. **L0 Triage**: `triage.go` estimates tokens deterministically, applies `routing_mode=auto` local/frontier routing when the provider was not explicitly selected, and enforces the `context_window` preflight before any provider call.
+4. **Context Assembly**: Combines the enrichment system prompt (embedded template, style override, or custom `prompt_file`) with the user input wrapped by `boundPromptInput` into a unified `provider.CallRequest{Model, SystemPrompt, UserPrompt, Effort}`. `--image` and `--config` never reach the provider path.
+5. **Payload Formatting**:
    - **OpenAI**: Encoded for OpenAI Responses API with `Instructions`.
    - **Gemini**: Encoded for Vertex AI `GenerateContent` using a Google ADC bearer token, or for the AI Studio endpoint (`generativelanguage.googleapis.com`) using `x-goog-api-key`.
    - **Chat Completions**: Standard JSON payload with `{role: "system", content: ...}` and `{role: "user", content: ...}`.
-5. **Output Routing**:
+6. **Output Routing**:
    - Streamed or buffered prompt text is written strictly to `stdout` or `--output`.
    - Progress spinners, diagnostics, and metrics are written to `stderr`.
    - System clipboard is populated via `atotto/clipboard` when `--copy` or `default_copy: true` is active.

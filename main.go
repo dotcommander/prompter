@@ -336,12 +336,7 @@ func newLoggerTo(stderr io.Writer, verbose bool) *slog.Logger {
 // Provider Resolution
 // -----------------------------------------------------------------------------
 
-func resolveProvider(cfg *config.Config, flagProvider, flagBaseURL string) (provider.Provider, error) {
-	providerName := cfg.Provider
-	if flagProvider != "" {
-		providerName = flagProvider
-	}
-
+func resolveProvider(cfg *config.Config, providerName, flagBaseURL string) (provider.Provider, error) {
 	settings := make(map[string]provider.ProviderSettings, len(cfg.Providers))
 	for name, configured := range cfg.Providers {
 		settings[name] = provider.ProviderSettings{
@@ -392,12 +387,29 @@ func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *sl
 		return runAssemble(f, cfg, output)
 	}
 
-	prov, err := resolveProvider(cfg, f.provider, f.baseURL)
+	input, err := readInput(f.file, f.args)
 	if err != nil {
 		return err
 	}
 
-	input, err := readInput(f.file, f.args)
+	// L0 triage: when routing_mode=auto owns selection, estimate the bounded
+	// input and pick the local or frontier tier. Explicit -p, env, and file
+	// provider selections bypass routing entirely.
+	providerName := f.provider
+	routingNote := ""
+	if providerName == "" {
+		providerName = cfg.Provider
+		if routingEnabled(cfg.RoutingMode, "", cfg.Origin("provider")) {
+			decision, err := decideRoute(cfg.RoutingLocalProvider, cfg.RoutingFrontierProvider, cfg.RoutingLocalMaxTokens, input)
+			if err != nil {
+				return err
+			}
+			providerName = decision.Provider
+			routingNote = decision.Detail
+		}
+	}
+
+	prov, err := resolveProvider(cfg, providerName, f.baseURL)
 	if err != nil {
 		return err
 	}
@@ -420,8 +432,14 @@ func runWithOutput(ctx context.Context, f *flags, cfg *config.Config, logger *sl
 		timeout = max(timeout, time.Duration(config.StreamingTimeout)*time.Second)
 	}
 
+	// Deterministic preflight: reject prompts that cannot fit the configured
+	// context window before contacting the provider or emitting a dry run.
+	if err := preflightContextWindow(cfg.Providers[prov.Name()].ContextWindow, cfg.MaxOutputTokens, cfg.SystemPrompt, input, prov.Name()); err != nil {
+		return err
+	}
+
 	if f.dryRun {
-		printDryRun(output.stderr, prov, modelName, f, cfg, input, timeout)
+		printDryRun(output.stderr, prov, modelName, f, cfg, input, timeout, routingNote)
 		return nil
 	}
 	if err := validateProviderCredentials(prov); err != nil {
@@ -497,13 +515,16 @@ func printResult(w io.Writer, result string) {
 	fmt.Fprintln(w, result)
 }
 
-func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags, cfg *config.Config, input string, timeout time.Duration) {
+func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags, cfg *config.Config, input string, timeout time.Duration, routingNote string) {
 	style := f.style
 	if style == "" && f.command == commandRefine {
 		style = "default"
 	}
 	fmt.Fprintf(w, "Dry run: no API call made\n")
 	fmt.Fprintf(w, "Provider: %s\n", prov.Name())
+	if routingNote != "" {
+		fmt.Fprintf(w, "Routing: auto -> %s (%s)\n", prov.Name(), routingNote)
+	}
 	fmt.Fprintf(w, "Model: %s\n", modelName)
 	providerConfig := cfg.Providers[prov.Name()]
 	baseURL := providerConfig.BaseURL
@@ -532,6 +553,10 @@ func printDryRun(w io.Writer, prov provider.Provider, modelName string, f *flags
 	fmt.Fprintf(w, "Effort: %s\n", cfg.Effort)
 	fmt.Fprintf(w, "System prompt bytes: %d\n", len(cfg.SystemPrompt))
 	fmt.Fprintf(w, "Input bytes: %d\n", len(input))
+	fmt.Fprintf(w, "Input tokens (est): %d\n", estimateTokens(boundPromptInput(input)))
+	if window := cfg.Providers[prov.Name()].ContextWindow; window > 0 {
+		fmt.Fprintf(w, "Context window: %d\n", window)
+	}
 	if f.file != "" {
 		fmt.Fprintf(w, "Input file: %s\n", f.file)
 	}

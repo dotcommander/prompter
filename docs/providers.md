@@ -42,7 +42,9 @@ Current behavior:
 - For third-party OpenAI-compatible servers (vLLM, Ollama, LocalAI) that expose `/v1/chat/completions`, use `-p omlx` with `--base-url <url>` (no API key required).
 - Unknown provider names fail fast with a clear error from `resolveProvider`.
 
-Configuration fields resolve from environment variables before an optional JSON block per provider. For model and endpoint fields, `PROMPTER_<PROVIDER>_*` takes precedence over the corresponding standard variable. Credentials resolve in this order:
+Configuration fields resolve from environment variables before an optional JSON block per provider. For model and endpoint fields, `PROMPTER_<PROVIDER>_*` takes precedence over the corresponding standard variable. A positive `context_window` (tokens; `PROMPTER_<PROVIDER>_CONTEXT_WINDOW` or `<PROVIDER>_CONTEXT_WINDOW`) enables a fail-fast preflight that rejects prompts whose estimated size cannot fit before any request is sent.
+
+Setting `routing_mode` to `auto` routes enrichment by estimated input size: inputs within `routing_local_max_tokens` (default 2048) go to `routing_local_provider` (default `omlx`), larger inputs escalate to `routing_frontier_provider` (default `gemini`). Explicit provider selection (`-p`, `PROMPTER_PROVIDER`, or the config-file `provider` key) always wins over routing. Credentials resolve in this order:
 
 1. `PROMPTER_<PROVIDER>_API_KEY`.
 2. The variable selected by `key_env` (with `PROMPTER_<PROVIDER>_KEY_ENV` overriding the file selector).

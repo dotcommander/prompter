@@ -280,3 +280,48 @@ func TestSparseSaveFromMissingFileReloads(t *testing.T) {
 		})
 	}
 }
+
+func TestRoutingAndContextWindowPersistence(t *testing.T) {
+	clearAllProviderEnvVars(t)
+	writeTestConfig(t, `{"routing_mode":"auto","routing_local_provider":"groq","routing_frontier_provider":"openai","routing_local_max_tokens":128,"groq":{"context_window":8192}}`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	effort := "medium"
+	cfg.ApplyPatch(ConfigPatch{Effort: &effort})
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := readIntent(t)
+	if got["routing_mode"] != "auto" || got["routing_local_provider"] != "groq" || got["routing_frontier_provider"] != "openai" || got["routing_local_max_tokens"] != float64(128) {
+		t.Fatalf("routing intent lost: %v", got)
+	}
+	groq := got["groq"].(map[string]any)
+	if groq["context_window"] != float64(8192) {
+		t.Fatalf("context window intent lost: %v", groq)
+	}
+}
+
+func TestRoutingDefaultsNotStampedOnSparseSave(t *testing.T) {
+	clearAllProviderEnvVars(t)
+	writeTestConfig(t, `{"provider":"openai"}`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	effort := "high"
+	cfg.ApplyPatch(ConfigPatch{Effort: &effort})
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := readIntent(t)
+	for _, key := range []string{"routing_mode", "routing_local_provider", "routing_frontier_provider", "routing_local_max_tokens"} {
+		if got[key] != nil {
+			t.Fatalf("untouched routing default %q stamped into config: %v", key, got)
+		}
+	}
+	if openai, _ := got["openai"].(map[string]any); openai != nil && openai["context_window"] != nil {
+		t.Fatalf("untouched context_window stamped into config: %v", openai)
+	}
+}

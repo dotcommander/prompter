@@ -88,6 +88,9 @@ func printConfig(w io.Writer, cfg *config.Config) {
 		}
 	}
 	fmt.Fprintf(w, "Effort:            %s\n", cfg.Effort)
+	if cfg.RoutingMode == routingModeAuto {
+		fmt.Fprintf(w, "Routing:           auto (%s local, %s frontier over %d est tokens)\n", cfg.RoutingLocalProvider, cfg.RoutingFrontierProvider, cfg.RoutingLocalMaxTokens)
+	}
 	fmt.Fprintf(w, "Timeout:           %ds\n", cfg.Timeout)
 	fmt.Fprintf(w, "Max Output Tokens: %d\n", cfg.MaxOutputTokens)
 	fmt.Fprintf(w, "Max Retries:       %d\n", cfg.MaxRetries)

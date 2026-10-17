@@ -29,9 +29,11 @@ func clearAllProviderEnvVars(t *testing.T) {
 		t.Setenv(name+"_API_KEY", "")
 		t.Setenv(name+"_MODEL", "")
 		t.Setenv(name+"_BASE_URL", "")
+		t.Setenv(name+"_CONTEXT_WINDOW", "")
 		t.Setenv("PROMPTER_"+name+"_API_KEY", "")
 		t.Setenv("PROMPTER_"+name+"_MODEL", "")
 		t.Setenv("PROMPTER_"+name+"_BASE_URL", "")
+		t.Setenv("PROMPTER_"+name+"_CONTEXT_WINDOW", "")
 		selector := "PROMPTER_" + name + "_KEY_ENV"
 		// Selector absence differs from an explicit empty override, which clears
 		// a persisted custom selector. Register restoration before unsetting it.
@@ -48,6 +50,10 @@ func clearAllProviderEnvVars(t *testing.T) {
 		}
 	}
 	t.Setenv("PROMPTER_PROVIDER", "")
+	t.Setenv("PROMPTER_ROUTING_MODE", "")
+	t.Setenv("PROMPTER_ROUTING_LOCAL_PROVIDER", "")
+	t.Setenv("PROMPTER_ROUTING_FRONTIER_PROVIDER", "")
+	t.Setenv("PROMPTER_ROUTING_LOCAL_MAX_TOKENS", "")
 	t.Setenv("GEMINI_PROJECT_ID", "")
 	t.Setenv("GEMINI_LOCATION", "")
 	t.Setenv("PROMPTER_GEMINI_PROJECT_ID", "")
@@ -531,5 +537,102 @@ func TestSaveWritesPortableHomePaths(t *testing.T) {
 	}
 	if !strings.Contains(str, `"components_file": "~/.config/prompter/components.json"`) {
 		t.Errorf("config.json should contain portable components_file, got: %s", str)
+	}
+}
+
+func TestLoadRoutingDefaults(t *testing.T) {
+	clearAllProviderEnvVars(t)
+	writeTestConfig(t, `{}`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RoutingMode != "off" || cfg.RoutingLocalProvider != "omlx" || cfg.RoutingFrontierProvider != "gemini" || cfg.RoutingLocalMaxTokens != DefaultRoutingLocalMaxTokens {
+		t.Fatalf("routing defaults = %+v", cfg.RoutingMode+", "+cfg.RoutingLocalProvider+", "+cfg.RoutingFrontierProvider)
+	}
+	if cfg.Origin("routing_mode") != "built-in default" {
+		t.Fatalf("routing_mode origin = %q", cfg.Origin("routing_mode"))
+	}
+}
+
+func TestLoadRoutingFileAndEnvironment(t *testing.T) {
+	clearAllProviderEnvVars(t)
+	writeTestConfig(t, `{"routing_mode":"auto","routing_local_provider":"groq","routing_frontier_provider":"openai","routing_local_max_tokens":128,"groq":{"context_window":8192}}`)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RoutingMode != "auto" || cfg.RoutingLocalProvider != "groq" || cfg.RoutingFrontierProvider != "openai" || cfg.RoutingLocalMaxTokens != 128 {
+		t.Fatalf("file routing values not resolved: %+v", cfg)
+	}
+	if cfg.Origin("routing_mode") != "config file" {
+		t.Fatalf("routing_mode origin = %q", cfg.Origin("routing_mode"))
+	}
+	if cfg.Providers["groq"].ContextWindow != 8192 || cfg.Origin("groq.context_window") != "config file" {
+		t.Fatalf("groq context window = %d (%s)", cfg.Providers["groq"].ContextWindow, cfg.Origin("groq.context_window"))
+	}
+
+	t.Setenv("PROMPTER_ROUTING_LOCAL_PROVIDER", "cerebras")
+	t.Setenv("PROMPTER_GROQ_CONTEXT_WINDOW", "4096")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RoutingLocalProvider != "cerebras" || cfg.Origin("routing_local_provider") != "environment: PROMPTER_ROUTING_LOCAL_PROVIDER" {
+		t.Fatalf("environment routing override failed: %+v (%s)", cfg, cfg.Origin("routing_local_provider"))
+	}
+	if cfg.Providers["groq"].ContextWindow != 4096 || cfg.Origin("groq.context_window") != "environment: PROMPTER_GROQ_CONTEXT_WINDOW" {
+		t.Fatalf("environment context window override failed: %d (%s)", cfg.Providers["groq"].ContextWindow, cfg.Origin("groq.context_window"))
+	}
+}
+
+func TestLoadRoutingInvalidMode(t *testing.T) {
+	clearAllProviderEnvVars(t)
+	writeTestConfig(t, `{"routing_mode":"sometimes"}`)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "invalid routing_mode") {
+		t.Fatalf("Load error = %v, want invalid routing_mode", err)
+	}
+}
+
+func TestLoadRoutingUnknownProviderOnlyValidatedWhenAuto(t *testing.T) {
+	clearAllProviderEnvVars(t)
+	writeTestConfig(t, `{"routing_mode":"auto","routing_local_provider":"nope"}`)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "not a known provider") {
+		t.Fatalf("Load error = %v, want unknown routing provider", err)
+	}
+	writeTestConfig(t, `{"routing_local_provider":"nope"}`)
+	if _, err := Load(); err != nil {
+		t.Fatalf("routing names must not be validated while routing is off: %v", err)
+	}
+}
+
+func TestLoadRoutingLocalMaxTokensBounds(t *testing.T) {
+	clearAllProviderEnvVars(t)
+	writeTestConfig(t, `{"routing_local_max_tokens":0}`)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "routing_local_max_tokens must be >= 1") {
+		t.Fatalf("Load error = %v, want routing_local_max_tokens bound", err)
+	}
+	writeTestConfig(t, `{}`)
+	t.Setenv("PROMPTER_ROUTING_LOCAL_MAX_TOKENS", "abc")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PROMPTER_ROUTING_LOCAL_MAX_TOKENS must be an integer") {
+		t.Fatalf("Load error = %v, want integer requirement", err)
+	}
+}
+
+func TestLoadContextWindowValidation(t *testing.T) {
+	clearAllProviderEnvVars(t)
+	writeTestConfig(t, `{"openai":{"context_window":-1}}`)
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "openai context_window must be >= 0") {
+		t.Fatalf("Load error = %v, want negative file context_window rejection", err)
+	}
+	writeTestConfig(t, `{}`)
+	t.Setenv("PROMPTER_OPENAI_CONTEXT_WINDOW", "nope")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "PROMPTER_OPENAI_CONTEXT_WINDOW must be an integer") {
+		t.Fatalf("Load error = %v, want integer requirement", err)
+	}
+	t.Setenv("PROMPTER_OPENAI_CONTEXT_WINDOW", "")
+	t.Setenv("OPENAI_CONTEXT_WINDOW", "-2")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "OPENAI_CONTEXT_WINDOW must be >= 0") {
+		t.Fatalf("Load error = %v, want negative env context_window rejection", err)
 	}
 }

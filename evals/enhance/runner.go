@@ -373,13 +373,15 @@ func evaluationEnv(providerName, credentialSource, promptPath string) []string {
 		"XDG_CONFIG_HOME":   true,
 		"PROMPTER_PROVIDER": true, "PROMPTER_EFFORT": true,
 		"PROMPTER_TIMEOUT": true, "PROMPTER_MAX_OUTPUT_TOKENS": true,
-		"PROMPTER_MAX_RETRIES": true,
+		"PROMPTER_MAX_RETRIES":  true,
+		"PROMPTER_ROUTING_MODE": true, "PROMPTER_ROUTING_LOCAL_PROVIDER": true,
+		"PROMPTER_ROUTING_FRONTIER_PROVIDER": true, "PROMPTER_ROUTING_LOCAL_MAX_TOKENS": true,
 		"PROMPTER_EVAL_HELPER": true, "PROMPTER_EVAL_CALL_LOG": true,
 		"PROMPTER_EXPECTED_PROMPT_FILE": true,
 	}
 	for _, name := range []string{"openai", "cerebras", "deepseek", "groq", "openrouter", "zai", "gemini", "omlx"} {
 		prefix := strings.ToUpper(name)
-		for _, suffix := range []string{"MODEL", "BASE_URL", "KEY_ENV"} {
+		for _, suffix := range []string{"MODEL", "BASE_URL", "KEY_ENV", "CONTEXT_WINDOW"} {
 			allowed[prefix+"_"+suffix] = true
 			allowed["PROMPTER_"+prefix+"_"+suffix] = true
 		}
@@ -720,6 +722,7 @@ func parseEffectiveSettings(stderr []byte) (map[string]string, error) {
 		"Max output tokens": true, "Effort": true, "System prompt bytes": true,
 		"Input bytes": true, "Base URL": true, "Credential source": true,
 		"Project ID": true, "Location": true, "Max retries": true,
+		"Routing": true, "Input tokens (est)": true, "Context window": true,
 	}
 	settings := make(map[string]string)
 	scanner := bufio.NewScanner(bytes.NewReader(stderr))
