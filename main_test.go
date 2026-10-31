@@ -615,7 +615,7 @@ func TestPrintDryRun(t *testing.T) {
 		SystemPrompt:    "system prompt",
 	}
 
-	printDryRun(&out, prov, "model-b", f, cfg, "prompt", 60*time.Second, "")
+	printDryRun(&out, prov, "model-b", f, cfg, &promptInput{source: "prompt"}, 60*time.Second, "")
 
 	got := out.String()
 	for _, want := range []string{
@@ -647,7 +647,7 @@ func TestPrintDryRunDefaultStyle(t *testing.T) {
 	f := &flags{command: commandRefine, dryRun: true}
 	cfg := &config.Config{MaxOutputTokens: 4096}
 
-	printDryRun(&out, prov, "model-a", f, cfg, "prompt", time.Minute, "")
+	printDryRun(&out, prov, "model-a", f, cfg, &promptInput{source: "prompt"}, time.Minute, "")
 
 	if !strings.Contains(out.String(), "Style: default") {
 		t.Fatalf("dry run output missing default style:\n%s", out.String())
@@ -657,7 +657,7 @@ func TestPrintDryRunDefaultStyle(t *testing.T) {
 func TestDryRunCredentialSourceDoesNotExposeCredential(t *testing.T) {
 	cfg := &config.Config{Providers: map[string]config.ProviderConfig{"groq": {APIKey: "private-value"}}}
 	var out strings.Builder
-	printDryRun(&out, provider.NewChat("groq", "private-value", "model", "http://test", 0), "model", &flags{command: commandRefine}, cfg, "input", time.Minute, "")
+	printDryRun(&out, provider.NewChat("groq", "private-value", "model", "http://test", 0), "model", &flags{command: commandRefine}, cfg, &promptInput{source: "input"}, time.Minute, "")
 	if strings.Contains(out.String(), "private-value") || !strings.Contains(out.String(), cfg.CredentialStatus("groq").Source) {
 		t.Fatalf("incorrect credential reporting: %s", out.String())
 	}

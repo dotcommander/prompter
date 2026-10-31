@@ -59,7 +59,7 @@ func TestDecideRoute(t *testing.T) {
 	t.Parallel()
 	t.Run("short input stays local", func(t *testing.T) {
 		t.Parallel()
-		decision, err := decideRoute("omlx", "gemini", 4096, "tighten this prompt")
+		decision, err := decideRoute("omlx", "gemini", 4096, &promptInput{source: "tighten this prompt"})
 		if err != nil {
 			t.Fatalf("decideRoute error = %v", err)
 		}
@@ -73,7 +73,7 @@ func TestDecideRoute(t *testing.T) {
 	t.Run("large input escalates to frontier", func(t *testing.T) {
 		t.Parallel()
 		long := strings.Repeat("explain this repository in detail. ", 512)
-		decision, err := decideRoute("omlx", "gemini", 4096, long)
+		decision, err := decideRoute("omlx", "gemini", 4096, &promptInput{source: long})
 		if err != nil {
 			t.Fatalf("decideRoute error = %v", err)
 		}
@@ -86,7 +86,7 @@ func TestDecideRoute(t *testing.T) {
 	})
 	t.Run("unknown provider fails fast", func(t *testing.T) {
 		t.Parallel()
-		if _, err := decideRoute("nowhere", "gemini", 4096, "input"); err == nil || !strings.Contains(err.Error(), "not a known provider") {
+		if _, err := decideRoute("nowhere", "gemini", 4096, &promptInput{source: "input"}); err == nil || !strings.Contains(err.Error(), "not a known provider") {
 			t.Fatalf("decideRoute error = %v, want unknown provider failure", err)
 		}
 	})
@@ -96,20 +96,20 @@ func TestPreflightContextWindow(t *testing.T) {
 	t.Parallel()
 	t.Run("disabled window skips gate", func(t *testing.T) {
 		t.Parallel()
-		if err := preflightContextWindow(0, 4096, "system", "input", "groq"); err != nil {
+		if err := preflightContextWindow(0, 4096, "system", &promptInput{source: "input"}, "groq"); err != nil {
 			t.Fatalf("preflightContextWindow error = %v, want skip", err)
 		}
 	})
 	t.Run("roomy window passes", func(t *testing.T) {
 		t.Parallel()
-		if err := preflightContextWindow(1_000_000, 4096, "system", "input", "groq"); err != nil {
+		if err := preflightContextWindow(1_000_000, 4096, "system", &promptInput{source: "input"}, "groq"); err != nil {
 			t.Fatalf("preflightContextWindow error = %v, want pass", err)
 		}
 	})
 	t.Run("overflow fails fast with guidance", func(t *testing.T) {
 		t.Parallel()
 		long := strings.Repeat("word ", 4000)
-		err := preflightContextWindow(512, 128, "system", long, "omlx")
+		err := preflightContextWindow(512, 128, "system", &promptInput{source: long}, "omlx")
 		if err == nil {
 			t.Fatal("preflightContextWindow returned nil, want overflow error")
 		}

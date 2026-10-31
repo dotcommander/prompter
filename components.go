@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -211,77 +209,6 @@ func (lib *ComponentLibrary) matchSubject(query string) *PromptSubject {
 		}
 	}
 	return nil
-}
-
-func (lib *ComponentLibrary) pickModifiers(selection ModifierSelection, subjectCategory, seed, query string) []PromptModifier {
-	var candidates []PromptModifier
-	for _, modifier := range lib.Modifiers {
-		if modifier.Category != selection.Category || modifier.Weight < selection.MinWeight {
-			continue
-		}
-		if len(modifier.Compatible) > 0 && subjectCategory != "" && !slices.Contains(modifier.Compatible, subjectCategory) {
-			continue
-		}
-		candidates = append(candidates, modifier)
-	}
-	if len(candidates) == 0 {
-		return nil
-	}
-	sortModifiers(candidates, selection.Category, seed, query)
-	count := min(selection.Count, len(candidates))
-	return append([]PromptModifier(nil), candidates[:count]...)
-}
-
-func (lib *ComponentLibrary) pickArtist(subjectCategory, seed, query string) *PromptArtist {
-	var candidates []PromptArtist
-	for _, artist := range lib.Artists {
-		if len(artist.Categories) == 0 || subjectCategory == "" || slices.Contains(artist.Categories, subjectCategory) {
-			candidates = append(candidates, artist)
-		}
-	}
-	if len(candidates) == 0 {
-		return nil
-	}
-	slices.SortFunc(candidates, func(a, b PromptArtist) int {
-		return compareWeightedChoice(seed, query, "artist", a.Name, b.Name, a.Weight, b.Weight)
-	})
-	return &candidates[0]
-}
-
-func (lib *ComponentLibrary) pickPlatform(seed, query string) *PromptPlatform {
-	if len(lib.Platforms) == 0 {
-		return nil
-	}
-	candidates := append([]PromptPlatform(nil), lib.Platforms...)
-	slices.SortFunc(candidates, func(a, b PromptPlatform) int {
-		return compareWeightedChoice(seed, query, "platform", a.Name, b.Name, a.Weight, b.Weight)
-	})
-	return &candidates[0]
-}
-
-func sortModifiers(modifiers []PromptModifier, category, seed, query string) {
-	slices.SortFunc(modifiers, func(a, b PromptModifier) int {
-		return compareWeightedChoice(seed, query, category, a.Text, b.Text, a.Weight, b.Weight)
-	})
-}
-
-func compareWeightedChoice(seed, query, scope, a, b string, weightA, weightB float64) int {
-	scoreA := stableChoiceScore(seed, query, scope, a) * max(weightA, 0.01)
-	scoreB := stableChoiceScore(seed, query, scope, b) * max(weightB, 0.01)
-	switch {
-	case scoreA > scoreB:
-		return -1
-	case scoreA < scoreB:
-		return 1
-	default:
-		return strings.Compare(a, b)
-	}
-}
-
-func stableChoiceScore(seed, query, scope, value string) float64 {
-	h := sha256.Sum256([]byte(seed + "\x00" + query + "\x00" + scope + "\x00" + value))
-	n := binary.BigEndian.Uint64(h[:8])
-	return float64(n) / float64(^uint64(0))
 }
 
 func buildAssembledPromptString(assembled *AssembledPrompt) string {

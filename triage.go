@@ -66,13 +66,13 @@ type routingDecision struct {
 // decideRoute applies the lexical cascade to the bounded input: estimated
 // tokens within the local budget stay on the local tier; anything larger
 // escalates to the frontier provider. Ambiguity escalates upward.
-func decideRoute(localProvider, frontierProvider string, localMaxTokens int, input string) (routingDecision, error) {
+func decideRoute(localProvider, frontierProvider string, localMaxTokens int, input *promptInput) (routingDecision, error) {
 	for _, name := range []string{localProvider, frontierProvider} {
 		if !slices.Contains(provider.KnownNames(), name) {
 			return routingDecision{}, fmt.Errorf("routing: %q is not a known provider (valid: %s)", name, provider.KnownNamesString())
 		}
 	}
-	estimate := estimateTokens(boundPromptInput(input))
+	estimate := input.estimatedTokens()
 	if estimate > localMaxTokens {
 		return routingDecision{
 			Provider: frontierProvider,
@@ -89,11 +89,11 @@ func decideRoute(localProvider, frontierProvider string, localMaxTokens int, inp
 // the configured provider context window. A zero or absent window skips the
 // gate instead of guessing a limit; the estimate covers the system prompt,
 // the bounded input envelope, and max_output_tokens.
-func preflightContextWindow(window, maxOutputTokens int, systemPrompt, input string, providerName string) error {
+func preflightContextWindow(window, maxOutputTokens int, systemPrompt string, input *promptInput, providerName string) error {
 	if window <= 0 {
 		return nil
 	}
-	estimate := estimateTokens(systemPrompt) + estimateTokens(boundPromptInput(input))
+	estimate := estimateTokens(systemPrompt) + input.estimatedTokens()
 	if estimate+maxOutputTokens > window {
 		return fmt.Errorf("%s context window exceeded: ~%d est prompt tokens + %d max output tokens > %d window tokens; shorten the input, lower max_output_tokens, or correct %s context_window", providerName, estimate, maxOutputTokens, window, providerName)
 	}
